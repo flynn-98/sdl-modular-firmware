@@ -18,7 +18,10 @@
 
 // Additional headers
 #include "SerialLogger.h"
+
 #include <AccelStepper.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 
 #define ADC1 GPIO_NUM_1
 #define ADC2 GPIO_NUM_2
@@ -59,6 +62,11 @@
 #define SERVO1 GPIO_NUM_18
 #define SERVO2 GPIO_NUM_17
 
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
 AccelStepper STEPPER1(AccelStepper::DRIVER, STEP5, DIR5); 
 AccelStepper STEPPER2(AccelStepper::DRIVER, STEP6, DIR6);
 AccelStepper STEPPER3(AccelStepper::DRIVER, STEP7, DIR7);
@@ -84,7 +92,7 @@ struct RGB {
 };
 
 enum LedColor {
-  WHITE,
+  LED_WHITE,
   BLUETOOTH,
   TRANSMIT,
   ERROR,
@@ -116,6 +124,7 @@ const float MAX_SPEED = 1000.0 * MICROSTEPS; //microsteps/s2
 // put function declarations here:
 static void connectToWiFi();
 void pwmDrivingSignal(int motor, int power);
+void drawCloudBerry(float scale);
 void pulseLEDs(LedColor color, int pulses = 1, int stepDelay = 5);
 
 void setup() {
@@ -147,8 +156,8 @@ void setup() {
   STEPPER4.setAcceleration(MAX_ACCEL);
   STEPPER4.setMaxSpeed(MAX_SPEED);
 
-  pixels.begin();
   Wire.begin(SDA, SCL, 400000);
+  pixels.begin();
 
   sht4.begin(&Wire);
   sht4.setPrecision(SHT4X_HIGH_PRECISION);
@@ -162,18 +171,32 @@ void setup() {
 
   pwmDrivingSignal(1, -50);
 
-  STEPPER1.move(10000);
-  digitalWrite(en_pins[0], LOW);
-  STEPPER1.runToPosition();
-  digitalWrite(en_pins[0], HIGH);
+  //STEPPER1.move(10000);
+  //digitalWrite(en_pins[0], LOW);
+  //STEPPER1.runToPosition();
+  //digitalWrite(en_pins[0], HIGH);
 
-  pulseLEDs(WHITE, 5, 10);
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Logger.Info(F("OLED not found!"));
+    while (true);
+  }
+
+  display.clearDisplay();
+  display.display();
+
+  pulseLEDs(HAPPY, 1, 20);
   delay(2000);
 }
 
 void loop() {
-  pulseLEDs(TRANSMIT, 1, 20);
-  delay(500);
+  //pulseLEDs(TRANSMIT);
+
+  // Pulsing scale using sine wave
+  static float angle = 0.0;
+  float scale = 1.0 + 0.2 * sin(angle);
+  drawCloudBerry(scale);
+  angle += 0.1;
+  delay(30);
 }
 
 static void connectToWiFi()
@@ -257,4 +280,25 @@ void pulseLEDs(LedColor color, int pulses, int stepDelay)
       delay(stepDelay);
     }
   }
+}
+
+void drawCloudBerry(float scale) {
+  display.clearDisplay();
+
+  // Center of the screen
+  int cx = SCREEN_WIDTH / 2;
+  int cy = SCREEN_HEIGHT / 2;
+
+  // Offsets for berry cluster pattern
+  int dx[] = { 0,  8, -8,  6, -6,  0};
+  int dy[] = {-10, -2, -2,  6,  6, 10};
+
+  int num_blobs = sizeof(dx) / sizeof(dx[0]);
+
+  for (int i = 0; i < num_blobs; i++) {
+    int r = scale * 6;
+    display.fillCircle(cx + scale * dx[i], cy + scale * dy[i], r, SSD1306_WHITE);
+  }
+
+  display.display();
 }
