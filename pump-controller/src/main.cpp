@@ -72,6 +72,9 @@ AccelStepper STEPPER2(AccelStepper::DRIVER, STEP6, DIR6);
 AccelStepper STEPPER3(AccelStepper::DRIVER, STEP7, DIR7);
 AccelStepper STEPPER4(AccelStepper::DRIVER, STEP8, DIR8);
 
+// Array of pointers to stepper objects
+AccelStepper* steppers[4] = {&STEPPER1, &STEPPER2, &STEPPER3, &STEPPER4};
+
 // SHT40-CD1B-R3 settings
 #define SHT4x_DEFAULT_ADDR 0x46
 Adafruit_SHT4x sht4 = Adafruit_SHT4x();
@@ -117,15 +120,28 @@ const int en_pins[4] = {EN5, EN6, EN7, EN8};
 
 const float STEPS_REV = 200.0;
 const float MICROSTEPS = 4.0;
+const float ML_REV = 0.1; //ml/rev
 
 const float MAX_ACCEL = 300.0 * MICROSTEPS; //microsteps/s2
 const float MAX_SPEED = 1000.0 * MICROSTEPS; //microsteps/s2
 
 // put function declarations here:
-static void connectToWiFi();
 void pwmDrivingSignal(int motor, int power);
-void drawCloudBerry(float scale);
+long volToSteps(float vol);
+void stepperDrivingSignal(int motor, float vol, float max_speed);
+void populateOLED();
 void pulseLEDs(LedColor color, int pulses = 1, int stepDelay = 5);
+
+float measured_temp;
+float measured_hum;
+
+float speed;
+float vol;
+float pwm;
+float seconds;
+
+int motor;
+String action = "No command";
 
 void setup() {
   // put your setup code here, to run once:
@@ -142,91 +158,111 @@ void setup() {
 
     ledcSetup(i, 10000, 10); // Channel i, 10kHz, 10-bit resolution
     ledcAttachPin(pwm_pins[i], i);
+
+    steppers[i]->setAcceleration(MAX_ACCEL);
+    steppers[i]->setMaxSpeed(MAX_SPEED);
   }
-
-  STEPPER1.setAcceleration(MAX_ACCEL);
-  STEPPER1.setMaxSpeed(MAX_SPEED);
-
-  STEPPER2.setAcceleration(MAX_ACCEL);
-  STEPPER2.setMaxSpeed(MAX_SPEED);
-
-  STEPPER3.setAcceleration(MAX_ACCEL);
-  STEPPER3.setMaxSpeed(MAX_SPEED);
-
-  STEPPER4.setAcceleration(MAX_ACCEL);
-  STEPPER4.setMaxSpeed(MAX_SPEED);
 
   Wire.begin(SDA, SCL, 400000);
   pixels.begin();
 
   sht4.begin(&Wire);
   sht4.setPrecision(SHT4X_HIGH_PRECISION);
-  sht4.getEvent(&hum, &temp); // populates both temp and humidity
-
-  float measured_temp = temp.temperature;
-  float measured_hum = hum.relative_humidity;
-
-  Logger.Info("T Reading: " + String(measured_temp, 2));
-  Logger.Info("H Reading: " + String(measured_hum, 2));
-
-  pwmDrivingSignal(1, -50);
-
-  //STEPPER1.move(10000);
-  //digitalWrite(en_pins[0], LOW);
-  //STEPPER1.runToPosition();
-  //digitalWrite(en_pins[0], HIGH);
+  sht4.getEvent(&hum, &temp);
+  delay(100);
+  measured_temp = temp.temperature;
+  measured_hum = hum.relative_humidity;
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Logger.Info(F("OLED not found!"));
-    while (true);
+    Logger.Error(F("No OLED found!"));
   }
 
-  display.clearDisplay();
-  display.display();
+  populateOLED();
+
+  Logger.Info("Available functions:");
+  Logger.Info("stepperMotor(int motor, float volume [ml], float speed [ml/s])");
+  Logger.Info("dcMotor(int motor, float power [+-%], float time [s])");
 
   pulseLEDs(HAPPY, 1, 20);
-  delay(2000);
 }
 
 void loop() {
-  //pulseLEDs(TRANSMIT);
+  // Main code here, to run repeatedly on a loop 
+  delay(1000);
 
-  // Pulsing scale using sine wave
-  static float angle = 0.0;
-  float scale = 1.0 + 0.2 * sin(angle);
-  drawCloudBerry(scale);
-  angle += 0.1;
-  delay(30);
+  action = "No command";
+  
+  sht4.getEvent(&hum, &temp);
+  delay(100);
+  measured_temp = temp.temperature;
+  measured_hum = hum.relative_humidity;
+
+  populateOLED();
+
+  // Wait until data received from PC, via Serial (USB)
+  if (Serial.available() > 0) {
+      // data structure to receive = action(var1, var2..)
+      // Read until open bracket to extract action, continue based on which action was requested
+      action = Serial.readStringUntil('(');
+
+      pulseLEDs(TRANSMIT);
+
+      if (action == "stepperMotor") {
+        motor = Serial.readStringUntil(',').toInt();
+        vol = Serial.readStringUntil(',').toFloat();
+        speed = Serial.readStringUntil(')').toFloat();
+
+        // Call action using received variables
+        stepperDrivingSignal(motor, vol, speed);
+
+        Logger.Info("Stepper Action Complete");
+      }
+      else if (action == "dcMotor") {
+        motor = Serial.readStringUntil(',').toInt();
+        pwm = Serial.readStringUntil(',').toFloat();
+        seconds = Serial.readStringUntil(')').toFloat() * 1000;
+
+        // Call action using received variables
+        pwmDrivingSignal(motor, pwm);
+        delay(floor(seconds));
+        pwmDrivingSignal(motor, 0);
+
+        Logger.Info("DC Action Complete");
+      }
+      else {
+          // Report back to PC if confused
+          Logger.Error("Unknown command: " + action);
+      }
+
+  }
+
 }
 
-static void connectToWiFi()
-{
-  if (ssid == "" || password == "") {
-    Logger.Error("No stored Wi-Fi credentials.");
-    pulseLEDs(ERROR, 3);
-    ESP.restart();
+long volToSteps(float vol) {
+    return floor(MICROSTEPS * STEPS_REV * vol / ML_REV);
+};
+
+void stepperDrivingSignal(int motor, float vol, float max_speed) {
+  // Volume in ml and speed in ml/s
+
+  // Validate motor index
+  if (motor < 1 || motor > 4) {
+    Serial.println("Error: Invalid stepper index (must be 1-4)");
+    return;
   }
 
-  WiFi.mode(WIFI_STA);
-  Logger.Info("Connecting to WiFi..");
+  // Configure stepper
+  steppers[motor - 1]->setMaxSpeed(volToSteps(max_speed));
+  steppers[motor - 1]->move(volToSteps(vol));
 
-  delay(100);
-  WiFi.begin(ssid.c_str(), password.c_str());
+  // Enable driver
+  digitalWrite(en_pins[motor - 1], LOW);
 
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(200);
-    Serial.print(".");
-    attempts++;
-  }
+  // Run to target position (blocking)
+  steppers[motor - 1]->runToPosition();
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Logger.Info("Connected!");
-  } else {
-    Logger.Error("Wi-Fi connection failed — restarting.");
-    pulseLEDs(ERROR, 3);
-    ESP.restart();
-  }
+  // Disable driver to save power/heat
+  digitalWrite(en_pins[motor - 1], HIGH);
 }
 
 void pwmDrivingSignal(int motor, int power) {
@@ -282,23 +318,28 @@ void pulseLEDs(LedColor color, int pulses, int stepDelay)
   }
 }
 
-void drawCloudBerry(float scale) {
+void populateOLED() {
   display.clearDisplay();
 
-  // Center of the screen
-  int cx = SCREEN_WIDTH / 2;
-  int cy = SCREEN_HEIGHT / 2;
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
 
-  // Offsets for berry cluster pattern
-  int dx[] = { 0,  8, -8,  6, -6,  0};
-  int dy[] = {-10, -2, -2,  6,  6, 10};
+  display.setCursor(0, 0);
+  display.print(action);
 
-  int num_blobs = sizeof(dx) / sizeof(dx[0]);
+  display.setCursor(0, 15);
+  display.print("----------");
 
-  for (int i = 0; i < num_blobs; i++) {
-    int r = scale * 6;
-    display.fillCircle(cx + scale * dx[i], cy + scale * dy[i], r, SSD1306_WHITE);
-  }
+  // Temperature
+  display.setCursor(0, 30);
+  display.print(measured_temp, 1); // 1 decimal place
+  display.write(247);     // ° symbol
+  display.print("C");
 
-  display.display();
+  // Humidity
+  display.setCursor(0, 45);
+  display.print(measured_hum, 1);
+  display.print("%RH");
+
+  display.display(); // Push buffer to display
 }
