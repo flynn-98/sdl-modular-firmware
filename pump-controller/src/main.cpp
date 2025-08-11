@@ -85,9 +85,6 @@ sensors_event_t hum, temp;
 #define NUMPIXELS 7
 Adafruit_NeoPixel pixels(NUMPIXELS, LEDPIN);
 
-String ssid;
-String password;
-
 struct RGB {
   uint8_t r;
   uint8_t g;
@@ -95,20 +92,22 @@ struct RGB {
 };
 
 enum LedColor {
-  LED_WHITE,
-  BLUETOOTH,
-  TRANSMIT,
-  ERROR,
-  HAPPY,
+  BRIGHT_WHITE,
+  BLUE,
+  PURPLE,
+  RED,
+  GREEN,
+  YELLOW,
   OFF
 };
 
 const RGB colorMap[] = {
-  {127, 127, 127},  // WHITE
-  {30, 50, 120},   // BLUETOOTH
-  {70, 30, 116},   // SPACE PURPLE / TRANSMIT
-  {110, 24, 30},    // RED
-  {26, 90, 34},    // GREEN
+  {255, 255, 255},  // BRIGHT WHITE
+  {84, 139, 227},   // SOFT BLUE
+  {189, 84, 227},   // SOFT PURPLE
+  {227, 84, 84},    // SOFT RED
+  {84, 227, 125},   // SOFT GREEN
+  {220, 227, 84},   // SOFT YELLOW
   {0, 0, 0}         // OFF
 };
 
@@ -120,38 +119,44 @@ const int en_pins[4] = {EN5, EN6, EN7, EN8};
 
 const float STEPS_REV = 200.0;
 const float MICROSTEPS = 4.0;
-const float ML_REV = 0.1; //ml/rev
+const float ML_REV = 0.094; //ml/rev
+const float back_flow = 0.02; //ml
 
 const float MAX_ACCEL = 300.0 * MICROSTEPS; //microsteps/s2
-const float MAX_SPEED = 1000.0 * MICROSTEPS; //microsteps/s2
+const float MAX_SPEED = 425.0 * MICROSTEPS; //microsteps/s2
 
 // put function declarations here:
 void pwmDrivingSignal(int motor, int power);
 long volToSteps(float vol);
-void stepperDrivingSignal(int motor, float vol, float max_speed);
-void populateOLED();
+void driveStepper(int motor, float vol, float back_flow = back_flow);
+void driveAllSteppers(float volumes[4], float back_flow = back_flow);
+void writeToOLED(String message = "No message.");
+void updateEnvironmentReadings();
 void pulseLEDs(LedColor color, int pulses = 1, int stepDelay = 5);
 
-float measured_temp;
-float measured_hum;
+float measured_temp = 0.0;
+float measured_hum = 0.0;
 
 float speed;
 float vol;
+float volumes[4];
 float pwm;
 float seconds;
-
 int motor;
-String action = "No command";
+
+String action;
+String buffer;
 
 void setup() {
   // put your setup code here, to run once:
-  pinMode(LEDPIN, OUTPUT);
 
+  // set up pins not handled by other libraries
   for (int i = 0; i < 4; i++) {
     pinMode(pwm_pins[i], OUTPUT);
     pinMode(dir_pins[i], OUTPUT);
     pinMode(en_pins[i], OUTPUT);
-    
+
+    // set default OFFs
     digitalWrite(pwm_pins[i], LOW);
     digitalWrite(dir_pins[i], LOW);
     digitalWrite(en_pins[i], HIGH);
@@ -159,91 +164,146 @@ void setup() {
     ledcSetup(i, 10000, 10); // Channel i, 10kHz, 10-bit resolution
     ledcAttachPin(pwm_pins[i], i);
 
+    // default stepper speed settings
     steppers[i]->setAcceleration(MAX_ACCEL);
     steppers[i]->setMaxSpeed(MAX_SPEED);
   }
 
   Wire.begin(SDA, SCL, 400000);
-  pixels.begin();
-
   sht4.begin(&Wire);
   sht4.setPrecision(SHT4X_HIGH_PRECISION);
-  sht4.getEvent(&hum, &temp);
-  delay(100);
-  measured_temp = temp.temperature;
-  measured_hum = hum.relative_humidity;
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Logger.Error(F("No OLED found!"));
+    Logger.Info("Pump Controller w/ 2x Transfer Pumps");
+    pulseLEDs(RED, 1, 10);
+  }
+  else {
+    Logger.Info("Pump Controller w/ OLED Screen + 4x Waste Pumps");
+    pulseLEDs(BLUE, 1, 10);
   }
 
-  populateOLED();
+  writeToOLED("Initialising pumpbot..");
+
+  // Begin neopixels
+  pinMode(LEDPIN, OUTPUT);
+  pixels.begin();
+
+  writeToOLED("Initialisation successful!");
 
   Logger.Info("Available functions:");
-  Logger.Info("stepperMotor(int motor, float volume [ml], float speed [ml/s])");
-  Logger.Info("dcMotor(int motor, float power [+-%], float time [s])");
-
-  pulseLEDs(HAPPY, 1, 20);
+  Logger.Info("singleStepperPump(int motor, float volume [ml])");
+  Logger.Info("multiStepperPump(float volume1 [ml], float volume2 [ml], float volume3 [ml], float volume4 [ml])");
+  Logger.Info("transferPump(int motor, float power [+-%], float time [s])");
+  Logger.Info("bothTransferPumps(float power [+-%], float time [s])");
+  Logger.Info("getTemperature()");
+  Logger.Info("getHumidity()");
+  Logger.Info("statusCheck()");
+  Logger.Info("displayMessage(String message)");
+  
+  pulseLEDs(GREEN, 1, 20);
 }
 
 void loop() {
   // Main code here, to run repeatedly on a loop 
   delay(1000);
-
-  action = "No command";
   
-  sht4.getEvent(&hum, &temp);
-  delay(100);
-  measured_temp = temp.temperature;
-  measured_hum = hum.relative_humidity;
-
-  populateOLED();
-
   // Wait until data received from PC, via Serial (USB)
   if (Serial.available() > 0) {
-      // data structure to receive = action(var1, var2..)
-      // Read until open bracket to extract action, continue based on which action was requested
-      action = Serial.readStringUntil('(');
+    pulseLEDs(PURPLE);
+    
+    // data structure to receive = action(var1, var2..)
+    action = Serial.readStringUntil('(');
 
-      pulseLEDs(TRANSMIT);
+    if (action == "singleStepperPump") {
+      motor = Serial.readStringUntil(',').toInt();
+      vol = Serial.readStringUntil(',').toFloat();
 
-      if (action == "stepperMotor") {
-        motor = Serial.readStringUntil(',').toInt();
-        vol = Serial.readStringUntil(',').toFloat();
-        speed = Serial.readStringUntil(')').toFloat();
+      driveStepper(motor, vol);
 
-        // Call action using received variables
-        stepperDrivingSignal(motor, vol, speed);
+      Logger.Info("# Pump action complete");
+    }
+    
+    else if (action == "multiStepperPump") {
+      volumes[0] = Serial.readStringUntil(',').toFloat();
+      volumes[1] = Serial.readStringUntil(',').toFloat();
+      volumes[2] = Serial.readStringUntil(',').toFloat();
+      volumes[3] = Serial.readStringUntil(')').toFloat();
 
-        Logger.Info("Stepper Action Complete");
-      }
-      else if (action == "dcMotor") {
-        motor = Serial.readStringUntil(',').toInt();
-        pwm = Serial.readStringUntil(',').toFloat();
-        seconds = Serial.readStringUntil(')').toFloat() * 1000;
+      driveAllSteppers(volumes);
 
-        // Call action using received variables
-        pwmDrivingSignal(motor, pwm);
-        delay(floor(seconds));
-        pwmDrivingSignal(motor, 0);
+      Logger.Info("# Pump action complete");
+    }
 
-        Logger.Info("DC Action Complete");
-      }
-      else {
-          // Report back to PC if confused
-          Logger.Error("Unknown command: " + action);
-      }
+    else if (action == "transferPump") {
+      motor = Serial.readStringUntil(',').toInt();
+      pwm = Serial.readStringUntil(',').toFloat();
+      seconds = Serial.readStringUntil(')').toFloat();
+
+      // Call action using received variables
+      pwmDrivingSignal(motor, pwm);
+      delay(seconds * 1000);
+      pwmDrivingSignal(motor, 0);
+
+      Logger.Info("# Transfer complete");
+    }
+
+    else if (action == "bothTransferPumps") {
+      pwm = Serial.readStringUntil(',').toFloat();
+      seconds = Serial.readStringUntil(')').toFloat();
+
+      // Call action using received variables
+      pwmDrivingSignal(1, pwm);
+      pwmDrivingSignal(2, pwm);
+      delay(seconds * 1000);
+      pwmDrivingSignal(1, 0);
+      pwmDrivingSignal(2, 0);
+
+      Logger.Info("# Transfer complete");
+    }
+
+    else if (action == "getTemperature") {
+      buffer = Serial.readStringUntil(')');
+      updateEnvironmentReadings();
+
+      Logger.Data(measured_temp);
+    }
+
+    else if (action == "getHumidity") {
+      buffer = Serial.readStringUntil(')');
+      updateEnvironmentReadings();
+
+      Logger.Data(measured_hum);
+    }
+
+    else if (action == "statusCheck") {
+      buffer = Serial.readStringUntil(')');
+
+      Logger.Info("# Controller available");
+    }
+
+    else if (action == "displayMessage") {
+      buffer = Serial.readStringUntil(')');
+
+      writeToOLED(buffer);
+    }
+
+    else {
+      // Report back to PC if confused
+      Logger.Error("Unknown command: " + action);
+    }
 
   }
-
+  else {
+    writeToOLED("Waiting for command..");
+  }
 }
 
 long volToSteps(float vol) {
     return floor(MICROSTEPS * STEPS_REV * vol / ML_REV);
 };
 
-void stepperDrivingSignal(int motor, float vol, float max_speed) {
-  // Volume in ml and speed in ml/s
+void driveStepper(int motor, float vol, float back_flow) {
+  // Volume in ml
 
   // Validate motor index
   if (motor < 1 || motor > 4) {
@@ -251,18 +311,71 @@ void stepperDrivingSignal(int motor, float vol, float max_speed) {
     return;
   }
 
-  // Configure stepper
-  steppers[motor - 1]->setMaxSpeed(volToSteps(max_speed));
-  steppers[motor - 1]->move(volToSteps(vol));
-
   // Enable driver
   digitalWrite(en_pins[motor - 1], LOW);
+
+  // Shift forward to account for last back_flow
+  steppers[motor - 1]->move(volToSteps(back_flow));
+  steppers[motor - 1]->runToPosition();
+
+  // Set target
+  steppers[motor - 1]->move(volToSteps(vol));
 
   // Run to target position (blocking)
   steppers[motor - 1]->runToPosition();
 
+  // Shift backwards to prevent drips
+  steppers[motor - 1]->move(volToSteps(-1 * back_flow));
+  steppers[motor - 1]->runToPosition();
+
   // Disable driver to save power/heat
   digitalWrite(en_pins[motor - 1], HIGH);
+}
+
+void driveAllSteppers(float volumes[4], float back_flow) {
+  // Volume in ml
+
+  // Enable drivers
+  for (int i = 0; i < 4; i++) {
+    digitalWrite(en_pins[i], LOW);
+
+    // Shift forward to account for last back_flow
+    steppers[i]->move(volToSteps(back_flow));
+    steppers[i]->runToPosition(); // Blocking
+  }
+
+  // Set targets
+  for (int i = 0; i < 4; i++) {
+    steppers[i]->move(volToSteps(volumes[i]));
+  }
+
+  // Run all steppers until all are done
+  bool anyRunning = true;
+  do {
+    anyRunning = false;
+    for (int i = 0; i < 4; i++) {
+      if (steppers[i]->distanceToGo() != 0) {
+        steppers[i]->run();
+        anyRunning = true;
+      }
+      else {
+        // Disable for now
+        digitalWrite(en_pins[i], HIGH);
+      }
+    }
+  } while (anyRunning);
+  
+  for (int i = 0; i < 4; i++) {
+    // Enable driver
+    digitalWrite(en_pins[i], LOW);
+
+    // Shift backwards to prevent drips
+    steppers[i]->move(volToSteps(-1 * back_flow));
+    steppers[i]->runToPosition();
+
+    // Disable driver to save power/heat
+    digitalWrite(en_pins[i], HIGH);
+  }
 }
 
 void pwmDrivingSignal(int motor, int power) {
@@ -318,14 +431,22 @@ void pulseLEDs(LedColor color, int pulses, int stepDelay)
   }
 }
 
-void populateOLED() {
+void updateEnvironmentReadings() {
+  sht4.getEvent(&hum, &temp);
+
+  measured_temp = temp.temperature;
+  measured_hum = hum.relative_humidity;
+}
+
+void writeToOLED(String message) {
+  updateEnvironmentReadings();
   display.clearDisplay();
 
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
 
   display.setCursor(0, 0);
-  display.print(action);
+  display.print(message);
 
   display.setCursor(0, 15);
   display.print("----------");

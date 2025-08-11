@@ -60,4 +60,11 @@ void SerialLogger::Error(String message)
   Serial.println(message);
 }
 
+void SerialLogger::Data(float message)
+{
+  writeTime();
+  Serial.print(" [DATA] ");
+  Serial.println(message);
+}
+
 SerialLogger Logger;

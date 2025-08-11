@@ -16,6 +16,7 @@ public:
   SerialLogger();
   void Info(String message);
   void Error(String message);
+  void Data(float message);
 };
 
 extern SerialLogger Logger;
