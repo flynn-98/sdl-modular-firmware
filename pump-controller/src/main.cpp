@@ -16,9 +16,6 @@
 #include <Preferences.h>
 #include <NimBLEDevice.h>
 
-// Additional headers
-#include "SerialLogger.h"
-
 #include <AccelStepper.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -169,16 +166,18 @@ void setup() {
     steppers[i]->setMaxSpeed(MAX_SPEED);
   }
 
+  Serial.begin(115200);
+
   Wire.begin(SDA, SCL, 400000);
   sht4.begin(&Wire);
   sht4.setPrecision(SHT4X_HIGH_PRECISION);
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Logger.Info("Pump Controller w/ 2x Transfer Pumps");
+    Serial.println("Pump Controller w/ 2x Transfer Pumps");
     pulseLEDs(RED, 1, 10);
   }
   else {
-    Logger.Info("Pump Controller w/ OLED Screen + 4x Waste Pumps");
+    Serial.println("Pump Controller w/ OLED Screen + 4x Waste Pumps");
     pulseLEDs(BLUE, 1, 10);
   }
 
@@ -190,15 +189,15 @@ void setup() {
 
   writeToOLED("Initialisation successful!");
 
-  Logger.Info("Available functions:");
-  Logger.Info("singleStepperPump(int motor, float volume [ml])");
-  Logger.Info("multiStepperPump(float volume1 [ml], float volume2 [ml], float volume3 [ml], float volume4 [ml])");
-  Logger.Info("transferPump(int motor, float power [+-%], float time [s])");
-  Logger.Info("bothTransferPumps(float power [+-%], float time [s])");
-  Logger.Info("getTemperature()");
-  Logger.Info("getHumidity()");
-  Logger.Info("statusCheck()");
-  Logger.Info("displayMessage(String message)");
+  Serial.println("Available functions:");
+  Serial.println("singleStepperPump(int motor, float volume [ml])");
+  Serial.println("multiStepperPump(float volume1 [ml], float volume2 [ml], float volume3 [ml], float volume4 [ml])");
+  Serial.println("transferPump(int motor, float power [+-%], float time [s])");
+  Serial.println("bothTransferPumps(float power [+-%], float time [s])");
+  Serial.println("getTemperature()");
+  Serial.println("getHumidity()");
+  Serial.println("statusCheck()");
+  Serial.println("displayMessage(String message)");
   
   pulseLEDs(GREEN, 1, 20);
 }
@@ -220,7 +219,7 @@ void loop() {
 
       driveStepper(motor, vol);
 
-      Logger.Info("# Pump action complete");
+      Serial.println("# Pump action complete");
     }
     
     else if (action == "multiStepperPump") {
@@ -231,7 +230,7 @@ void loop() {
 
       driveAllSteppers(volumes);
 
-      Logger.Info("# Pump action complete");
+      Serial.println("# Pump action complete");
     }
 
     else if (action == "transferPump") {
@@ -244,7 +243,7 @@ void loop() {
       delay(seconds * 1000);
       pwmDrivingSignal(motor, 0);
 
-      Logger.Info("# Transfer complete");
+      Serial.println("# Transfer complete");
     }
 
     else if (action == "bothTransferPumps") {
@@ -258,27 +257,27 @@ void loop() {
       pwmDrivingSignal(1, 0);
       pwmDrivingSignal(2, 0);
 
-      Logger.Info("# Transfer complete");
+      Serial.println("# Transfer complete");
     }
 
     else if (action == "getTemperature") {
       buffer = Serial.readStringUntil(')');
       updateEnvironmentReadings();
 
-      Logger.Data(measured_temp);
+      Serial.println(measured_temp);
     }
 
     else if (action == "getHumidity") {
       buffer = Serial.readStringUntil(')');
       updateEnvironmentReadings();
 
-      Logger.Data(measured_hum);
+      Serial.println(measured_hum);
     }
 
     else if (action == "statusCheck") {
       buffer = Serial.readStringUntil(')');
 
-      Logger.Info("# Controller available");
+      Serial.println("# Controller available");
     }
 
     else if (action == "displayMessage") {
@@ -289,7 +288,7 @@ void loop() {
 
     else {
       // Report back to PC if confused
-      Logger.Error("Unknown command: " + action);
+      Serial.println("Unknown command: " + action);
     }
 
   }
