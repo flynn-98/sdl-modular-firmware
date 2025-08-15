@@ -144,6 +144,12 @@ int motor;
 String action;
 String buffer;
 
+unsigned long CurrentTime;
+unsigned long ElapsedTime;
+
+unsigned long LastCall = 0;
+const unsigned long screenReset = 120;
+
 void setup() {
   // put your setup code here, to run once:
 
@@ -193,13 +199,13 @@ void setup() {
   Serial.println("singleStepperPump(int motor, float volume [ml])");
   Serial.println("multiStepperPump(float volume1 [ml], float volume2 [ml], float volume3 [ml], float volume4 [ml])");
   Serial.println("transferPump(int motor, float power [+-%], float time [s])");
-  Serial.println("bothTransferPumps(float power [+-%], float time [s])");
   Serial.println("getTemperature()");
   Serial.println("getHumidity()");
   Serial.println("statusCheck()");
   Serial.println("displayMessage(String message)");
-  
-  pulseLEDs(GREEN, 1, 20);
+
+  pulseLEDs(GREEN);
+  writeToOLED("Waiting for command..");
 }
 
 void loop() {
@@ -208,7 +214,7 @@ void loop() {
   
   // Wait until data received from PC, via Serial (USB)
   if (Serial.available() > 0) {
-    pulseLEDs(PURPLE);
+    pulseLEDs(PURPLE, 1, 2);
     
     // data structure to receive = action(var1, var2..)
     action = Serial.readStringUntil('(');
@@ -246,20 +252,6 @@ void loop() {
       Serial.println("# Transfer complete");
     }
 
-    else if (action == "bothTransferPumps") {
-      pwm = Serial.readStringUntil(',').toFloat();
-      seconds = Serial.readStringUntil(')').toFloat();
-
-      // Call action using received variables
-      pwmDrivingSignal(1, pwm);
-      pwmDrivingSignal(2, pwm);
-      delay(seconds * 1000);
-      pwmDrivingSignal(1, 0);
-      pwmDrivingSignal(2, 0);
-
-      Serial.println("# Transfer complete");
-    }
-
     else if (action == "getTemperature") {
       buffer = Serial.readStringUntil(')');
       updateEnvironmentReadings();
@@ -278,23 +270,37 @@ void loop() {
       buffer = Serial.readStringUntil(')');
 
       Serial.println("# Controller available");
+      pulseLEDs(GREEN, 2, 2);
     }
 
     else if (action == "displayMessage") {
       buffer = Serial.readStringUntil(')');
 
       writeToOLED(buffer);
+      LastCall = ceil( millis() / 1000 );
+
+      Serial.println("# Message received");
     }
 
     else {
       // Report back to PC if confused
       Serial.println("Unknown command: " + action);
+      pulseLEDs(RED, 3, 5);
     }
 
   }
+
   else {
-    writeToOLED("Waiting for command..");
+    CurrentTime = ceil( millis() / 1000 );
+    ElapsedTime = CurrentTime - LastCall;
+
+    if (ElapsedTime > screenReset) {
+        writeToOLED("Waiting...");
+        LastCall = CurrentTime;
+    }
+
   }
+
 }
 
 long volToSteps(float vol) {
