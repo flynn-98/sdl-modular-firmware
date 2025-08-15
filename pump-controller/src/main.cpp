@@ -180,11 +180,11 @@ void setup() {
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     Serial.println("Pump Controller w/ 2x Transfer Pumps");
-    pulseLEDs(RED, 1, 10);
+    pulseLEDs(BLUE);
   }
   else {
     Serial.println("Pump Controller w/ OLED Screen + 4x Waste Pumps");
-    pulseLEDs(BLUE, 1, 10);
+    pulseLEDs(YELLOW);
   }
 
   writeToOLED("Initialising pumpbot..");
@@ -204,7 +204,7 @@ void setup() {
   Serial.println("statusCheck()");
   Serial.println("displayMessage(String message)");
 
-  pulseLEDs(GREEN);
+  pulseLEDs(GREEN, 1, 20);
   writeToOLED("Waiting for command..");
 }
 
@@ -214,7 +214,7 @@ void loop() {
   
   // Wait until data received from PC, via Serial (USB)
   if (Serial.available() > 0) {
-    pulseLEDs(PURPLE, 1, 2);
+    pulseLEDs(PURPLE);
     
     // data structure to receive = action(var1, var2..)
     action = Serial.readStringUntil('(');
@@ -270,7 +270,7 @@ void loop() {
       buffer = Serial.readStringUntil(')');
 
       Serial.println("# Controller available");
-      pulseLEDs(GREEN, 2, 2);
+      pulseLEDs(GREEN, 2);
     }
 
     else if (action == "displayMessage") {
@@ -285,7 +285,7 @@ void loop() {
     else {
       // Report back to PC if confused
       Serial.println("Unknown command: " + action);
-      pulseLEDs(RED, 3, 5);
+      pulseLEDs(RED, 3);
     }
 
   }
