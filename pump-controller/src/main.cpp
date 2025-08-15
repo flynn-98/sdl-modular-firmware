@@ -59,6 +59,8 @@
 #define SERVO1 GPIO_NUM_18
 #define SERVO2 GPIO_NUM_17
 
+#define BUTTON GPIO_NUM_0
+
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET -1
@@ -104,9 +106,92 @@ const RGB colorMap[] = {
   {189, 84, 227},   // SOFT PURPLE
   {227, 84, 84},    // SOFT RED
   {84, 227, 125},   // SOFT GREEN
-  {220, 227, 84},   // SOFT YELLOW
+  {250, 239, 27},   // SOFT YELLOW
   {0, 0, 0}         // OFF
 };
+
+// ---- Animator (non-blocking) ----
+struct SpinnerPulse {
+  enum State { SPIN, CENTER_PULSE } state = SPIN;
+
+  Adafruit_NeoPixel* strip;
+  const uint8_t* outer;     // indices of 6 ring LEDs (clockwise)
+  uint8_t outerCount;
+  uint8_t centerIdx;
+
+  // Colors (by enum lookup into colorMap)
+  LedColor spinColor = BLUE;     // ring
+
+  // Timing / behavior
+  uint16_t stepIntervalMs = 70;      // spinner step duration
+  uint8_t  tailLen = 3;              // head + trailing LEDs
+  uint16_t pulseUpMs = 300;          // fade-in time
+  uint16_t pulseDownMs = 350;        // fade-out time
+
+  // Internals
+  unsigned long tLastStep = 0;
+  unsigned long tStateStart = 0;
+  uint8_t head = 0;                  // 0..outerCount-1
+
+  SpinnerPulse(Adafruit_NeoPixel* s,
+               const uint8_t* outerIdx, uint8_t nOuter, uint8_t center)
+  : strip(s), outer(outerIdx), outerCount(nOuter), centerIdx(center) {}
+
+  inline uint32_t mkColor(const RGB& c, uint8_t scale = 255) const {
+    // scale (0..255), integer math
+    uint8_t r = (uint16_t)c.r * scale / 255;
+    uint8_t g = (uint16_t)c.g * scale / 255;
+    uint8_t b = (uint16_t)c.b * scale / 255;
+    return strip->Color(r, g, b);
+  }
+
+  // Tail brightness profile (head -> tail)
+  inline uint8_t tailLevel(uint8_t d) const {
+    static const uint8_t levels[6] = {255, 140, 60, 25, 10, 4};
+    return (d < 6) ? levels[d] : 0;
+  }
+
+  void begin(LedColor spinC) {
+    spinColor  = spinC;
+    head = 0;
+    tLastStep = millis();
+    tStateStart = tLastStep;
+
+    for (uint8_t i = 0; i < strip->numPixels(); ++i) strip->setPixelColor(i, 0);
+    strip->show();
+  }
+
+  void run() {
+    unsigned long now = millis();
+    if ((now - tLastStep) >= stepIntervalMs) {
+          tLastStep = now;
+          stepSpinnerFrame();
+        }
+  }
+
+  void stepSpinnerFrame() {
+    head = (head + 1) % outerCount;
+
+    // clear ring
+    for (uint8_t i = 0; i < outerCount; ++i)
+      strip->setPixelColor(outer[i], 0);
+
+    // head + tail
+    for (uint8_t t = 0; t < tailLen; ++t) {
+      uint8_t idx = (head + outerCount - t) % outerCount;
+      uint8_t lvl = tailLevel(t);
+      if (lvl == 0) break;
+      strip->setPixelColor(outer[idx], mkColor(colorMap[spinColor], lvl));
+    }
+
+    // center off during spin
+    strip->setPixelColor(centerIdx, 0);
+    strip->show();
+  }
+};
+
+const uint8_t OUTER[6] = {0,1,2,3,4,5};
+SpinnerPulse anim(&pixels, OUTER, 6, 6);
 
 // Arrays to map motor index to DIR/PWM pins
 const int pwm_pins[4] = {PWM1, PWM2, PWM3, PWM4};
@@ -125,6 +210,7 @@ const float MAX_SPEED = 425.0 * MICROSTEPS; //microsteps/s2
 // put function declarations here:
 void pwmDrivingSignal(int motor, int power);
 long volToSteps(float vol);
+void runSteppers(bool led = true);
 void driveStepper(int motor, float vol, float back_flow = back_flow);
 void driveAllSteppers(float volumes[4], float back_flow = back_flow);
 void writeToOLED(String message = "No message.");
@@ -180,11 +266,9 @@ void setup() {
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     Serial.println("Pump Controller w/ 2x Transfer Pumps");
-    pulseLEDs(BLUE);
   }
   else {
     Serial.println("Pump Controller w/ OLED Screen + 4x Waste Pumps");
-    pulseLEDs(YELLOW);
   }
 
   writeToOLED("Initialising pumpbot..");
@@ -192,6 +276,9 @@ void setup() {
   // Begin neopixels
   pinMode(LEDPIN, OUTPUT);
   pixels.begin();
+  anim.begin(BLUE);
+
+  pinMode(BUTTON, INPUT);
 
   writeToOLED("Initialisation successful!");
 
@@ -209,7 +296,7 @@ void setup() {
 }
 
 void loop() {
-  // Main code here, to run repeatedly on a loop 
+  // Main code here, to run repeatedly on a loop
   delay(1000);
   
   // Wait until data received from PC, via Serial (USB)
@@ -327,7 +414,7 @@ void driveStepper(int motor, float vol, float back_flow) {
   steppers[motor - 1]->move(volToSteps(vol));
 
   // Run to target position (blocking)
-  steppers[motor - 1]->runToPosition();
+  runSteppers();
 
   // Shift backwards to prevent drips
   steppers[motor - 1]->move(volToSteps(-1 * back_flow));
@@ -335,28 +422,24 @@ void driveStepper(int motor, float vol, float back_flow) {
 
   // Disable driver to save power/heat
   digitalWrite(en_pins[motor - 1], HIGH);
+
+  // Overwrite spinner
+  pulseLEDs(GREEN);
 }
 
-void driveAllSteppers(float volumes[4], float back_flow) {
-  // Volume in ml
-
-  // Enable drivers
+void runSteppers(bool led) {
+  // Enable all drivers
   for (int i = 0; i < 4; i++) {
     digitalWrite(en_pins[i], LOW);
-
-    // Shift forward to account for last back_flow
-    steppers[i]->move(volToSteps(back_flow));
-    steppers[i]->runToPosition(); // Blocking
-  }
-
-  // Set targets
-  for (int i = 0; i < 4; i++) {
-    steppers[i]->move(volToSteps(volumes[i]));
   }
 
   // Run all steppers until all are done
   bool anyRunning = true;
   do {
+    if (led) {
+      anim.run();
+    }
+
     anyRunning = false;
     for (int i = 0; i < 4; i++) {
       if (steppers[i]->distanceToGo() != 0) {
@@ -364,23 +447,39 @@ void driveAllSteppers(float volumes[4], float back_flow) {
         anyRunning = true;
       }
       else {
-        // Disable for now
+        // Disable when done
         digitalWrite(en_pins[i], HIGH);
       }
     }
   } while (anyRunning);
-  
+}
+
+void driveAllSteppers(float volumes[4], float back_flow) {
+  // Volume in ml
+
+  // Shift forward to account for last back_flow
   for (int i = 0; i < 4; i++) {
-    // Enable driver
-    digitalWrite(en_pins[i], LOW);
-
-    // Shift backwards to prevent drips
-    steppers[i]->move(volToSteps(-1 * back_flow));
-    steppers[i]->runToPosition();
-
-    // Disable driver to save power/heat
-    digitalWrite(en_pins[i], HIGH);
+    steppers[i]->move(volToSteps(back_flow));
   }
+
+  runSteppers(false);
+
+  // Set targets
+  for (int i = 0; i < 4; i++) {
+    steppers[i]->move(volToSteps(volumes[i]));
+  }
+
+  runSteppers();
+
+  // Shift backwards to prevent drips
+  for (int i = 0; i < 4; i++) {
+    steppers[i]->move(volToSteps(-1 * back_flow));
+  }
+
+  runSteppers(false);
+
+  // Overwrite spinner
+  pulseLEDs(GREEN);
 }
 
 void pwmDrivingSignal(int motor, int power) {
