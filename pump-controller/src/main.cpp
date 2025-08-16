@@ -97,16 +97,18 @@ enum LedColor {
   RED,
   GREEN,
   YELLOW,
+  ORANGE,
   OFF
 };
 
 const RGB colorMap[] = {
-  {255, 255, 255},  // BRIGHT WHITE
-  {84, 139, 227},   // SOFT BLUE
-  {189, 84, 227},   // SOFT PURPLE
-  {227, 84, 84},    // SOFT RED
-  {84, 227, 125},   // SOFT GREEN
+  {255, 255, 255},  // BRIGHT WHITE 
+  {84, 139, 227},   // SOFT BLUE (Spinner)
+  {189, 84, 227},   // SOFT PURPLE (Received message)
+  {227, 84, 84},    // SOFT RED (Error)
+  {84, 227, 125},   // SOFT GREEN (Start up success)
   {250, 239, 27},   // SOFT YELLOW
+  {255, 166, 51},   // SOFT ORANGE (Motor finished)
   {0, 0, 0}         // OFF
 };
 
@@ -210,7 +212,8 @@ const float MAX_SPEED = 425.0 * MICROSTEPS; //microsteps/s2
 // put function declarations here:
 void pwmDrivingSignal(int motor, int power);
 long volToSteps(float vol);
-void runSteppers(bool led = true);
+void spinnerTimer(float seconds);
+void runSteppers();
 void driveStepper(int motor, float vol, float back_flow = back_flow);
 void driveAllSteppers(float volumes[4], float back_flow = back_flow);
 void writeToOLED(String message = "No message.");
@@ -333,7 +336,7 @@ void loop() {
 
       // Call action using received variables
       pwmDrivingSignal(motor, pwm);
-      delay(seconds * 1000);
+      spinnerTimer(seconds);
       pwmDrivingSignal(motor, 0);
 
       Serial.println("# Transfer complete");
@@ -408,7 +411,7 @@ void driveStepper(int motor, float vol, float back_flow) {
 
   // Shift forward to account for last back_flow
   steppers[motor - 1]->move(volToSteps(back_flow));
-  steppers[motor - 1]->runToPosition();
+  runSteppers();
 
   // Set target
   steppers[motor - 1]->move(volToSteps(vol));
@@ -418,16 +421,16 @@ void driveStepper(int motor, float vol, float back_flow) {
 
   // Shift backwards to prevent drips
   steppers[motor - 1]->move(volToSteps(-1 * back_flow));
-  steppers[motor - 1]->runToPosition();
+  runSteppers();
 
   // Disable driver to save power/heat
   digitalWrite(en_pins[motor - 1], HIGH);
 
   // Overwrite spinner
-  pulseLEDs(GREEN);
+  pulseLEDs(ORANGE);
 }
 
-void runSteppers(bool led) {
+void runSteppers() {
   // Enable all drivers
   for (int i = 0; i < 4; i++) {
     digitalWrite(en_pins[i], LOW);
@@ -436,9 +439,7 @@ void runSteppers(bool led) {
   // Run all steppers until all are done
   bool anyRunning = true;
   do {
-    if (led) {
-      anim.run();
-    }
+    anim.run();
 
     anyRunning = false;
     for (int i = 0; i < 4; i++) {
@@ -454,6 +455,19 @@ void runSteppers(bool led) {
   } while (anyRunning);
 }
 
+void spinnerTimer(float seconds) {
+  unsigned long secondsLong = (long)ceil(seconds);
+  CurrentTime = ceil( millis() / 1000 );
+
+  do {
+    anim.run();
+  }
+  while ((ceil( millis() / 1000 ) - CurrentTime) < secondsLong);
+  
+  // Overwrite spinner
+  pulseLEDs(ORANGE);
+}
+
 void driveAllSteppers(float volumes[4], float back_flow) {
   // Volume in ml
 
@@ -461,25 +475,22 @@ void driveAllSteppers(float volumes[4], float back_flow) {
   for (int i = 0; i < 4; i++) {
     steppers[i]->move(volToSteps(back_flow));
   }
-
-  runSteppers(false);
+  runSteppers();
 
   // Set targets
   for (int i = 0; i < 4; i++) {
     steppers[i]->move(volToSteps(volumes[i]));
   }
-
   runSteppers();
 
   // Shift backwards to prevent drips
   for (int i = 0; i < 4; i++) {
     steppers[i]->move(volToSteps(-1 * back_flow));
   }
-
-  runSteppers(false);
+  runSteppers();
 
   // Overwrite spinner
-  pulseLEDs(GREEN);
+  pulseLEDs(ORANGE);
 }
 
 void pwmDrivingSignal(int motor, int power) {
