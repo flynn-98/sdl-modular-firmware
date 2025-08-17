@@ -219,10 +219,50 @@ bool messageReceived = false;
 
 // --- BLE/command shared state ---
 static bool bleConnected = false;
+static bool wasConnected = false;
+
+static uint32_t lastAdvKick = 0;
+static bool advRestartPending = false;
+static uint32_t advRetryAt = 0;
 
 // For BLE-originated commands: "action(arg1,arg2,...)"
 static String bleParams;
 static size_t blePos = 0;  // current cursor into bleParams
+
+// put function declarations here:
+void pwmDrivingSignal(int motor, int power);
+long volToSteps(float vol);
+void spinnerTimer(float seconds);
+void runSteppers();
+void driveStepper(int motor, float vol, float back_flow = back_flow);
+void driveAllSteppers(float volumes[4], float back_flow = back_flow);
+void writeToOLED(String message = "No message.");
+void updateEnvironmentReadings();
+void pulseLEDs(LedColor color, int pulses = 1, int stepDelay = 5);
+void startBLEProvisioning();
+static String nextBleToken(char delim = ',');
+static inline String readArg(char delim = ',');
+static inline void respond(const String& s);
+static inline void scheduleAdvRestart(uint32_t delayMs = 400);
+
+float measured_temp = 0.0;
+float measured_hum = 0.0;
+
+float speed;
+float vol;
+float volumes[4];
+float pwm;
+float seconds;
+int motor;
+
+String action;
+String buffer;
+
+unsigned long CurrentTime;
+unsigned long ElapsedTime;
+
+unsigned long LastCall = 0;
+const unsigned long screenReset = 120;
 
 class commandCallback : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic* pChar, NimBLEConnInfo& /*connInfo*/) override {
@@ -247,46 +287,17 @@ class commandCallback : public NimBLECharacteristicCallbacks {
 };
 
 class ServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer* /*s*/, NimBLEConnInfo& /*i*/) override { bleConnected = true; }
-  void onDisconnect(NimBLEServer* /*s*/) override {
-    bleConnected = false;
-    NimBLEDevice::startAdvertising();
+  void onConnect(NimBLEServer* /*s*/) { 
+    Serial.println("BLE Connected"); 
+  }
+  void onDisconnect(NimBLEServer* /*s*/) { 
+    Serial.println("BLE Disconnected; re-advertising");
+    // Use the same advertising object; older NimBLEs are picky here.
+    NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+    bool ok = adv->start();
+    Serial.println(ok ? "[BLE] Advertising restarted" : "[BLE] Advertising restart FAILED");
   }
 };
-
-// put function declarations here:
-void pwmDrivingSignal(int motor, int power);
-long volToSteps(float vol);
-void spinnerTimer(float seconds);
-void runSteppers();
-void driveStepper(int motor, float vol, float back_flow = back_flow);
-void driveAllSteppers(float volumes[4], float back_flow = back_flow);
-void writeToOLED(String message = "No message.");
-void updateEnvironmentReadings();
-void pulseLEDs(LedColor color, int pulses = 1, int stepDelay = 5);
-void startBLEProvisioning();
-static String nextBleToken(char delim = ',');
-static inline String readArg(char delim = ',');
-static inline void respond(const String& s);
-
-float measured_temp = 0.0;
-float measured_hum = 0.0;
-
-float speed;
-float vol;
-float volumes[4];
-float pwm;
-float seconds;
-int motor;
-
-String action;
-String buffer;
-
-unsigned long CurrentTime;
-unsigned long ElapsedTime;
-
-unsigned long LastCall = 0;
-const unsigned long screenReset = 120;
 
 void setup() {
   // put your setup code here, to run once:
@@ -428,7 +439,44 @@ void loop() {
         writeToOLED("Waiting...");
         LastCall = CurrentTime;
     }
+
+    NimBLEServer* srv = NimBLEDevice::getServer();
+    bleConnected = (srv && srv->getConnectedCount() > 0);
+
+    // Edge: connected -> disconnected
+    if (wasConnected && !bleConnected) {
+      Serial.println("[BLE] Detected disconnect; scheduling re-advertise");
+      scheduleAdvRestart();  // ~0.4s works well on macOS
+    }
+    // Edge: disconnected -> connected cancels any pending restart
+    if (!wasConnected && bleConnected) {
+      advRestartPending = false;
+    }
+
+    wasConnected = bleConnected;
+
+    // Fire the scheduled restart (once), with idempotent check
+    if (advRestartPending && (int32_t)(millis() - advRetryAt) >= 0) {
+      NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+      if (adv && !adv->isAdvertising() && !bleConnected) {
+        bool ok = adv->start();
+        Serial.println(ok ? "[BLE] Advertising restarted" : "[BLE] Advertising restart FAILED");
+      }
+      advRestartPending = false;  // done either way
+    }
+
+    // --- BLE advertising watchdog (covers missed/late disconnects) ---
+    //if (CurrentTime - lastAdvKick > 2) {
+    //  lastAdvKick = CurrentTime;
+    //  NimBLEServer* srv = NimBLEDevice::getServer();
+    //  if (srv && srv->getConnectedCount() == 0) {
+    //    bool ok = NimBLEDevice::getAdvertising()->start(); // harmless if already advertising
+    //    Serial.println(ok ? "BLE Command channel restarted!" : "BLE advertising START FAILED!");
+    //  }
+    //}
+
   }
+
 }
 
 long volToSteps(float vol) {
@@ -619,6 +667,8 @@ void writeToOLED(String message) {
 }
 
 void startBLEProvisioning() {
+  Serial.println("Attempting to start BLE command channel..");
+
   NimBLEDevice::init(DEVICE_NAME);
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
   NimBLEDevice::setSecurityAuth(false, false, true);
@@ -627,7 +677,6 @@ void startBLEProvisioning() {
 
   NimBLEServer* pServer = NimBLEDevice::createServer();
   pServer->setCallbacks(new ServerCallbacks());
-
   NimBLEService* pService = pServer->createService(SERVICE_UUID);
 
   pCharacteristic = pService->createCharacteristic(
@@ -653,9 +702,9 @@ void startBLEProvisioning() {
 
   ad->setAdvertisementData(advData);
   ad->setScanResponseData(scanResp);
-  ad->start();
 
-  Serial.println("BLE command channel started");
+  bool ok = ad->start();
+  Serial.println(ok ? "[BLE] Initial advertising started" : "[BLE] Advertising restart FAILED");
 }
 
 
@@ -680,9 +729,14 @@ static inline String readArg(char delim) {
 
 static inline void respond(const String& s) {
   Serial.println(s);
-  if (bleConnected && pCharacteristic) {
-    // Notify via same characteristic; client must enable notifications.
-    pCharacteristic->setValue(s.c_str());
-    pCharacteristic->notify();
-  }
+  if (!pCharacteristic) return;
+  pCharacteristic->setValue(s.c_str());
+  // Notify unconditionally; if nobody subscribed, this is a no-op on older NimBLE
+  pCharacteristic->notify();
+}
+
+// Restart scheduler to readvertise bluetooth after disconnect
+static inline void scheduleAdvRestart(uint32_t delayMs) {
+  advRestartPending = true;
+  advRetryAt = millis() + delayMs;   // debounce so CoreBluetooth fully releases
 }
