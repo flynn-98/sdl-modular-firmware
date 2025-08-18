@@ -232,7 +232,7 @@ static size_t blePos = 0;  // current cursor into bleParams
 // put function declarations here:
 void pwmDrivingSignal(int motor, int power);
 long volToSteps(float vol);
-void spinnerTimer(float seconds);
+void spinnerTimer(float seconds, LedColor pulse = ORANGE);
 void runSteppers();
 void driveStepper(int motor, float vol, float back_flow = back_flow);
 void driveAllSteppers(float volumes[4], float back_flow = back_flow);
@@ -357,7 +357,7 @@ void setup() {
   // Begin bluetooth
   startBLEProvisioning();
 
-  pulseLEDs(GREEN, 1, 20);
+  spinnerTimer(1, GREEN);
   writeToOLED("Waiting for command..");
 }
 
@@ -411,7 +411,6 @@ void loop() {
     else if (action == "statusCheck") {
       (void)readArg(')');
       respond("# Controller available");
-      pulseLEDs(GREEN, 2);
     }
     else if (action == "displayMessage") {
       buffer = readArg(')');
@@ -464,19 +463,7 @@ void loop() {
       }
       advRestartPending = false;  // done either way
     }
-
-    // --- BLE advertising watchdog (covers missed/late disconnects) ---
-    //if (CurrentTime - lastAdvKick > 2) {
-    //  lastAdvKick = CurrentTime;
-    //  NimBLEServer* srv = NimBLEDevice::getServer();
-    //  if (srv && srv->getConnectedCount() == 0) {
-    //    bool ok = NimBLEDevice::getAdvertising()->start(); // harmless if already advertising
-    //    Serial.println(ok ? "BLE Command channel restarted!" : "BLE advertising START FAILED!");
-    //  }
-    //}
-
   }
-
 }
 
 long volToSteps(float vol) {
@@ -541,7 +528,7 @@ void runSteppers() {
   } while (anyRunning);
 }
 
-void spinnerTimer(float seconds) {
+void spinnerTimer(float seconds, LedColor pulse) {
   unsigned long secondsLong = (long)ceil(seconds);
   CurrentTime = ceil( millis() / 1000 );
 
@@ -551,7 +538,7 @@ void spinnerTimer(float seconds) {
   while ((ceil( millis() / 1000 ) - CurrentTime) < secondsLong);
   
   // Overwrite spinner
-  pulseLEDs(ORANGE);
+  pulseLEDs(pulse);
 }
 
 void driveAllSteppers(float volumes[4], float back_flow) {
@@ -559,7 +546,7 @@ void driveAllSteppers(float volumes[4], float back_flow) {
 
   // Shift forward to account for last back_flow
   for (int i = 0; i < 4; i++) {
-    steppers[i]->move(volToSteps(back_flow));
+    if (volumes[i] != 0) {steppers[i]->move(volToSteps(back_flow));}
   }
   runSteppers();
 
@@ -571,7 +558,7 @@ void driveAllSteppers(float volumes[4], float back_flow) {
 
   // Shift backwards to prevent drips
   for (int i = 0; i < 4; i++) {
-    steppers[i]->move(volToSteps(-1 * back_flow));
+    if (volumes[i] != 0) {steppers[i]->move(volToSteps(-1 * back_flow));}
   }
   runSteppers();
 
