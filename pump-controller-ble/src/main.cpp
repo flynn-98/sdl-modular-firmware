@@ -125,7 +125,7 @@ struct SpinnerPulse {
   LedColor spinColor = BLUE;     // ring
 
   // Timing / behavior
-  uint16_t stepIntervalMs = 70;      // spinner step duration
+  uint16_t stepIntervalMs = 68;      // spinner step duration
   uint8_t  tailLen = 3;              // head + trailing LEDs
   uint16_t pulseUpMs = 300;          // fade-in time
   uint16_t pulseDownMs = 350;        // fade-out time
@@ -164,9 +164,8 @@ struct SpinnerPulse {
   }
 
   void run() {
-    unsigned long now = millis();
-    if ((now - tLastStep) >= stepIntervalMs) {
-          tLastStep = now;
+    if ((millis() - tLastStep) >= stepIntervalMs) {
+          tLastStep = millis();
           stepSpinnerFrame();
         }
   }
@@ -203,19 +202,19 @@ const int en_pins[4] = {EN5, EN6, EN7, EN8};
 
 const float STEPS_REV = 200.0;
 const float MICROSTEPS = 4.0;
-const float ML_REV = 0.094; //ml/rev
-const float back_flow = 0.02; //ml
+const float ML_REV = 0.094; // ml/rev
+const float back_flow = 0.02; // ml
+const float default_flow_rate = 0.05; // ml/s
 
-const float MAX_ACCEL = 300.0 * MICROSTEPS; //microsteps/s2
-const float MAX_SPEED = 425.0 * MICROSTEPS; //microsteps/s2
+const float MAX_ACCEL = 500.0 * MICROSTEPS; //microsteps/s2
 
 // BLE additions
 static NimBLECharacteristic* pCharacteristic;
 bool messageReceived = false;
 
-#define SERVICE_UUID        "7b5c5357-7ddd-44a4-8419-bc6b6bd4b74b"
-#define CHARACTERISTIC_UUID "42bb8b48-f737-4435-adba-f578eba53675"
-#define DEVICE_NAME         "PumpController"
+#define SERVICE_UUID        "7b5c5357-7ddd-44a4-8419-bc6b6bd4b74b" // Can stay the same
+#define CHARACTERISTIC_UUID "42bb8b48-f737-4435-adba-f578eba53675" // Can stay the same
+#define DEVICE_NAME         "PumpControllerA" // To change per controller
 
 // --- BLE/command shared state ---
 static bool bleConnected = false;
@@ -234,8 +233,9 @@ void pwmDrivingSignal(int motor, int power);
 long volToSteps(float vol);
 void spinnerTimer(float seconds, LedColor pulse = ORANGE);
 void runSteppers();
-void driveStepper(int motor, float vol, float back_flow = back_flow);
-void driveAllSteppers(float volumes[4], float back_flow = back_flow);
+void driveStepper(int motor, float vol, float flow_rate = default_flow_rate, float back_flow = back_flow);
+void driveAllSteppers(float volumes[4], float flow_rate = default_flow_rate, float back_flow = back_flow);
+int16_t printWrappedChars(Adafruit_SSD1306& d, const String& text, int16_t x, int16_t y, uint8_t maxCharsPerLine, uint8_t lineHeightPx);
 void writeToOLED(String message = "No message.");
 void updateEnvironmentReadings();
 void pulseLEDs(LedColor color, int pulses = 1, int stepDelay = 5);
@@ -248,7 +248,7 @@ static inline void scheduleAdvRestart(uint32_t delayMs = 400);
 float measured_temp = 0.0;
 float measured_hum = 0.0;
 
-float speed;
+float flow_rate;
 float vol;
 float volumes[4];
 float pwm;
@@ -318,7 +318,7 @@ void setup() {
 
     // default stepper speed settings
     steppers[i]->setAcceleration(MAX_ACCEL);
-    steppers[i]->setMaxSpeed(MAX_SPEED);
+    steppers[i]->setMaxSpeed((float)volToSteps(default_flow_rate));
   }
 
   Serial.begin(115200);
@@ -327,13 +327,7 @@ void setup() {
   sht4.begin(&Wire);
   sht4.setPrecision(SHT4X_HIGH_PRECISION);
 
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println("Pump Controller w/ 2x Transfer Pumps");
-  }
-  else {
-    Serial.println("Pump Controller w/ OLED Screen + 4x Waste Pumps");
-  }
-
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   writeToOLED("Initialising pumpbot..");
 
   // Begin neopixels
@@ -346,8 +340,8 @@ void setup() {
   writeToOLED("Initialisation successful!");
 
   Serial.println("Available functions:");
-  Serial.println("singleStepperPump(int motor, float volume [ml])");
-  Serial.println("multiStepperPump(float volume1 [ml], float volume2 [ml], float volume3 [ml], float volume4 [ml])");
+  Serial.println("singleStepperPump(int motor, float volume [ml], float flow_rate [ml/s])");
+  Serial.println("multiStepperPump(float volume1 [ml], float volume2 [ml], float volume3 [ml], float volume4 [ml], float flow_rate [ml/s])");
   Serial.println("transferPump(int motor, float power [+-%], float time [s])");
   Serial.println("getTemperature()");
   Serial.println("getHumidity()");
@@ -376,17 +370,21 @@ void loop() {
     // else action already updated in ble callback
       
     if (action == "singleStepperPump") {
-      motor = readArg(',').toInt();      
-      vol   = readArg(')').toFloat();           
-      driveStepper(motor, vol);
+      motor     = readArg(',').toInt();      
+      vol       = readArg(',').toFloat();  
+      flow_rate = readArg(')').toFloat();
+
+      driveStepper(motor, vol, flow_rate);
       respond("# Pump action complete");         
     }
     else if (action == "multiStepperPump") {
       volumes[0] = readArg(',').toFloat();
       volumes[1] = readArg(',').toFloat();
       volumes[2] = readArg(',').toFloat();
-      volumes[3] = readArg(')').toFloat();
-      driveAllSteppers(volumes);
+      volumes[3] = readArg(',').toFloat();
+      flow_rate  = readArg(')').toFloat();
+
+      driveAllSteppers(volumes, flow_rate);
       respond("# Pump action complete");
     }
     else if (action == "transferPump") {
@@ -470,7 +468,7 @@ long volToSteps(float vol) {
     return floor(MICROSTEPS * STEPS_REV * vol / ML_REV);
 };
 
-void driveStepper(int motor, float vol, float back_flow) {
+void driveStepper(int motor, float vol, float flow_rate, float back_flow) {
   // Volume in ml
 
   // Validate motor index
@@ -481,6 +479,9 @@ void driveStepper(int motor, float vol, float back_flow) {
 
   // Enable driver
   digitalWrite(en_pins[motor - 1], LOW);
+
+  // Set speed
+  steppers[motor - 1]->setMaxSpeed((float)volToSteps(flow_rate));
 
   // Shift forward to account for last back_flow
   steppers[motor - 1]->move(volToSteps(back_flow));
@@ -541,12 +542,15 @@ void spinnerTimer(float seconds, LedColor pulse) {
   pulseLEDs(pulse);
 }
 
-void driveAllSteppers(float volumes[4], float back_flow) {
+void driveAllSteppers(float volumes[4], float flow_rate, float back_flow) {
   // Volume in ml
 
-  // Shift forward to account for last back_flow
+  // Shift forward to account for last back_flow and set new speeds
   for (int i = 0; i < 4; i++) {
-    if (volumes[i] != 0) {steppers[i]->move(volToSteps(back_flow));}
+    if (volumes[i] != 0) {
+      steppers[i]->setMaxSpeed((float)volToSteps(flow_rate));
+      steppers[i]->move(volToSteps(back_flow));
+    }
   }
   runSteppers();
 
@@ -626,6 +630,74 @@ void updateEnvironmentReadings() {
   measured_hum = hum.relative_humidity;
 }
 
+// New helper: wrap by character count (not pixels)
+int16_t printWrappedChars(Adafruit_SSD1306& d, const String& text,
+                          int16_t x, int16_t y,
+                          uint8_t maxCharsPerLine, uint8_t lineHeightPx) {
+  String line;
+  int n = text.length();
+  int i = 0;
+
+  auto flushLine = [&](){
+    if (line.length() == 0) return;
+    d.setCursor(x, y);
+    d.print(line);
+    y += lineHeightPx;
+    line = "";
+  };
+
+  while (i < n) {
+    // handle explicit newlines
+    if (text[i] == '\n') { flushLine(); i++; continue; }
+
+    // read next word (up to space/newline/end)
+    int start = i;
+    while (i < n && text[i] != ' ' && text[i] != '\n') i++;
+    String word = text.substring(start, i);
+    // skip single space after word
+    if (i < n && text[i] == ' ') i++;
+
+    // If word fits on current line (with space if needed), append
+    if (word.length() <= maxCharsPerLine) {
+      uint8_t need = line.length() ? 1 : 0; // space
+      if (line.length() + need + word.length() <= maxCharsPerLine) {
+        if (need) line += ' ';
+        line += word;
+      } else {
+        // move word to next line intact
+        flushLine();
+        line = word;
+      }
+    } else {
+      // Word itself longer than a line: split into chunks of maxCharsPerLine
+      if (line.length()) flushLine(); // start splitting on a fresh line
+      int pos = 0;
+      while (pos < (int)word.length()) {
+        int chunkLen = min<int>(maxCharsPerLine, word.length() - pos);
+        String chunk = word.substring(pos, pos + chunkLen);
+        if (chunk.length() == maxCharsPerLine || pos + chunkLen < (int)word.length()) {
+          // full chunk: print immediately
+          d.setCursor(x, y);
+          d.print(chunk);
+          y += lineHeightPx;
+        } else {
+          // last (short) chunk becomes start of current line
+          line = chunk;
+        }
+        pos += chunkLen;
+      }
+    }
+  }
+
+  // flush any remaining text
+  if (line.length()) {
+    d.setCursor(x, y);
+    d.print(line);
+    y += lineHeightPx;
+  }
+  return y;
+}
+
 void writeToOLED(String message) {
   updateEnvironmentReadings();
   display.clearDisplay();
@@ -633,22 +705,30 @@ void writeToOLED(String message) {
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
 
-  display.setCursor(0, 0);
-  display.print(message);
+  int16_t nextY = printWrappedChars(display, message, 0, 0, /*maxChars*/20, /*lineH*/10);
 
-  display.setCursor(0, 15);
-  display.print("----------");
+  // draw a clean horizontal separator at y=20 (or just below message)
+  int16_t sepY = max(20, nextY + 4);
+  display.drawFastHLine(0, sepY, 128, SSD1306_WHITE);
 
   // Temperature
-  display.setCursor(0, 30);
+  display.setCursor(0, 45);
   display.print(measured_temp, 1); // 1 decimal place
   display.write(247);     // ° symbol
   display.print("C");
 
   // Humidity
-  display.setCursor(0, 45);
+  display.setCursor(0, 56);
   display.print(measured_hum, 1);
   display.print("%RH");
+
+  display.drawFastVLine(52, 45, 20, SSD1306_WHITE);
+
+  // Title
+  display.setCursor(65, 45);
+  display.print("PumpBot V2");
+  display.setCursor(65, 56);
+  display.print("Controller");
 
   display.display(); // Push buffer to display
 }

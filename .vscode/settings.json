@@ -12,6 +12,7 @@
         "vector": "cpp",
         "ostream": "cpp",
         "print": "cpp",
-        "new": "cpp"
+        "new": "cpp",
+        "ios": "cpp"
     }
 }
