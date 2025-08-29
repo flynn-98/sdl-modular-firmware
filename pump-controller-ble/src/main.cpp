@@ -214,7 +214,7 @@ bool messageReceived = false;
 
 #define SERVICE_UUID        "7b5c5357-7ddd-44a4-8419-bc6b6bd4b74b" // Can stay the same
 #define CHARACTERISTIC_UUID "42bb8b48-f737-4435-adba-f578eba53675" // Can stay the same
-#define DEVICE_NAME         "PumpControllerA" // To change per controller
+#define DEVICE_NAME         "PumpControllerB" // To change per controller
 
 // --- BLE/command shared state ---
 static bool bleConnected = false;
@@ -483,12 +483,8 @@ void driveStepper(int motor, float vol, float flow_rate, float back_flow) {
   // Set speed
   steppers[motor - 1]->setMaxSpeed((float)volToSteps(flow_rate));
 
-  // Shift forward to account for last back_flow
-  steppers[motor - 1]->move(volToSteps(back_flow));
-  runSteppers();
-
-  // Set target
-  steppers[motor - 1]->move(volToSteps(vol));
+  // Shift forward to account for last back_flow and add target
+  steppers[motor - 1]->move(volToSteps(vol+back_flow));
 
   // Run to target position (blocking)
   runSteppers();
@@ -543,26 +539,22 @@ void spinnerTimer(float seconds, LedColor pulse) {
 }
 
 void driveAllSteppers(float volumes[4], float flow_rate, float back_flow) {
-  // Volume in ml
+  // Volumes in ml
 
-  // Shift forward to account for last back_flow and set new speeds
+  // Set speeds, shift forward to account for last back_flow and add target
   for (int i = 0; i < 4; i++) {
     if (volumes[i] != 0) {
       steppers[i]->setMaxSpeed((float)volToSteps(flow_rate));
-      steppers[i]->move(volToSteps(back_flow));
+      steppers[i]->move(volToSteps(volumes[i]+back_flow));
     }
-  }
-  runSteppers();
-
-  // Set targets
-  for (int i = 0; i < 4; i++) {
-    steppers[i]->move(volToSteps(volumes[i]));
   }
   runSteppers();
 
   // Shift backwards to prevent drips
   for (int i = 0; i < 4; i++) {
-    if (volumes[i] != 0) {steppers[i]->move(volToSteps(-1 * back_flow));}
+    if (volumes[i] != 0) {
+      steppers[i]->move(volToSteps(-1 * back_flow));
+    }
   }
   runSteppers();
 
