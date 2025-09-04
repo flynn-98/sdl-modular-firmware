@@ -286,6 +286,24 @@ void loop() {
 
       respond(String(ph.readPH(voltage, measured_temp), 2));
     }
+    else if (action == "sendToWaste") {
+      seconds = Serial.readStringUntil(')').toInt();
+        
+      pwmDrivingSignal(2, 70);
+      LEDS.spinnerTimer(seconds, ORANGE);
+      pwmDrivingSignal(motor, 0);
+
+      respond("# Sent to Waste");
+    }
+    else if (action == "refreshPhWater") {
+      seconds = Serial.readStringUntil(')').toInt();
+        
+      pwmDrivingSignal(1, 70);
+      LEDS.spinnerTimer(seconds, ORANGE);
+      pwmDrivingSignal(motor, 0);
+
+      respond("# Refreshed Water");
+    }
     else {
       Serial.println("Unknown command: " + action);
       LEDS.pulse(RED, 3);
