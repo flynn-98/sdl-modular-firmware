@@ -88,6 +88,7 @@ const float back_flow   = 0.02;    // ml
 
 const float default_flow_rate = 0.3; // ml/s
 const float ecms_flow_rate = 0.01;
+const float max_ecms_flow_rate = 0.1;
 
 const float MAX_ACCEL   = 500.0 * MICROSTEPS; // microsteps/s^2
 
@@ -272,40 +273,53 @@ void loop() {
       respond("# Water added");
     }
     else if (action == "transferToECMS") {
-      vol = readArg(')').toFloat();
-      driveStepper(4, vol);
+      vol = readArg(',').toFloat();
+      flow_rate = readArg(')').toFloat();
+      
+      // safety
+      if (flow_rate > max_ecms_flow_rate) {
+        flow_rate = max_ecms_flow_rate;
+      }
+      else if (flow_rate==0) {
+        flow_rate = ecms_flow_rate;
+      }
+
+      driveStepper(motor=4, vol=vol, flow_rate=flow_rate);
 
       respond("# Mixture sent to ECMS");
     }
     else if (action == "getPh") {
       (void)readArg(')');
-      updateEnvironmentReadings();
-
-      voltage = analogRead(ADC1);
-      voltage = voltage * (3300 / 1023.0); // Convert to voltage
+      updateEnvironmentReadings();      
+      voltage = analogRead(ADC3);
+      voltage = voltage * (3300 / 4095.0); // Convert to voltage
 
       respond(String(ph.readPH(voltage, measured_temp), 2));
     }
     else if (action == "sendToWaste") {
-      seconds = Serial.readStringUntil(')').toInt();
-        
-      pwmDrivingSignal(2, 70);
+      seconds = readArg(')').toFloat();
+
+      pwmDrivingSignal(1, 75);
       LEDS.spinnerTimer(seconds, ORANGE);
-      pwmDrivingSignal(motor, 0);
+      pwmDrivingSignal(1, 0);
 
       respond("# Sent to Waste");
     }
     else if (action == "refreshPhWater") {
-      seconds = Serial.readStringUntil(')').toInt();
+      seconds = readArg(')').toFloat();
         
-      pwmDrivingSignal(1, 70);
+      pwmDrivingSignal(2, 75);
       LEDS.spinnerTimer(seconds, ORANGE);
-      pwmDrivingSignal(motor, 0);
+      pwmDrivingSignal(2, 0);
+
+      pwmDrivingSignal(2, -75);
+      LEDS.spinnerTimer(seconds, ORANGE);
+      pwmDrivingSignal(2, 0);
 
       respond("# Refreshed Water");
     }
     else {
-      Serial.println("Unknown command: " + action);
+      respond("Unknown command: " + action);
       LEDS.pulse(RED, 3);
     }
 
@@ -433,7 +447,7 @@ void closeValve() {
 }
 
 void openValve() {
-    pwmDrivingSignal(4, 100);
+    pwmDrivingSignal(4, 60);
     valveOpen = true;
     LastCall = ceil(millis() / 1000.0);
 }
