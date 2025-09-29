@@ -109,6 +109,7 @@ float seconds;
 int   motor;
 
 float voltage;
+float ph_value;
 
 String action;
 String buffer;
@@ -290,11 +291,11 @@ void loop() {
     }
     else if (action == "getPh") {
       (void)readArg(')');
-      updateEnvironmentReadings();      
-      voltage = analogRead(ADC3);
-      voltage = voltage * (3300 / 4095.0); // Convert to voltage
+      voltage = (analogRead(ADC3)/4095.0)*3300.0;;
+      //ph_value = ph.readPH(voltage, 25)
+      ph_value = -0.00579 * voltage + 15.40708;
 
-      respond(String(ph.readPH(voltage, measured_temp), 2));
+      respond(String(ph_value, 2));
     }
     else if (action == "sendToWaste") {
       seconds = readArg(')').toFloat();
