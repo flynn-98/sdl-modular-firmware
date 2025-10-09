@@ -29,6 +29,10 @@ public:
   // Optional: read temperature in °C (if you care).
   bool readTemperatureC(float& out_degC);
 
+  // Emergency valve override
+  bool mfcForceCloseValve();        // force-close NOW (requires measuring)
+  bool mfcResetForceCloseValve();   // return to normal regulation
+
   // Accessors
   uint8_t address() const { return _addr; }
 

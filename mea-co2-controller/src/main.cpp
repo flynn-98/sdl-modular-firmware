@@ -174,6 +174,8 @@ void setup() {
   Serial.println("mfcOff()");
   Serial.println("mfcSetFlow(float sccm)");
   Serial.println("mfcGetFlow()");
+  Serial.println("mfcForceClose()");
+  Serial.println("mfcForceCloseReset()");
 
   // BLE
   ble_begin(DEVICE_NAME, SERVICE_UUID, CHARACTERISTIC_UUID);
@@ -256,6 +258,14 @@ void loop() {
       float flow = NAN;
       bool ok = MFC.mfcReadFlowSccm(flow, 10);
       if (ok) respond(String(flow, 2)); else respond(String(0));
+    }
+    else if (action == "mfcForceClose") {
+      (void)readArg(')');
+      respond(MFC.mfcForceCloseValve() ? "# Valve forced CLOSED" : "# Force-close failed");
+    }
+    else if (action == "mfcForceCloseReset") {
+      (void)readArg(')');
+      respond(MFC.mfcResetForceCloseValve() ? "# Valve control restored" : "# Reset force-close failed");
     }
     else {
       Serial.println("Unknown command: " + action);

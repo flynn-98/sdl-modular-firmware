@@ -12,7 +12,7 @@ bool SFC6000D::mfcOn() {
   // Best-effort stop first (in case it was already running)
   (void)_dev.stopContinuousMeasurement();
 
-  // CO2-only as requested
+  // CO2-only
   int16_t err = _dev.startCo2ContinuousMeasurement();
   return logIfError(err, F("startCo2ContinuousMeasurement"));
 }
@@ -83,3 +83,23 @@ bool SFC6000D::logIfError(int16_t err, const __FlashStringHelper* where) {
   Serial.println(err);
   return false;
 }
+
+bool SFC6000D::mfcForceCloseValve() {
+  if (!_begun) return false;
+
+  // The force-close command must be issued while continuous measurement runs.
+  // If you're not sure it's running, (re)start CO2 measurement first (idempotent).
+  (void)_dev.startCo2ContinuousMeasurement();
+
+  int16_t err = _dev.forceCloseValve();  // hard close, flow still readable
+  return logIfError(err, F("forceCloseValve"));
+}
+
+bool SFC6000D::mfcResetForceCloseValve() {
+  if (!_begun) return false;
+
+  // Return to normal automatic valve regulation
+  int16_t err = _dev.resetForceCloseValve();
+  return logIfError(err, F("resetForceCloseValve"));
+}
+
