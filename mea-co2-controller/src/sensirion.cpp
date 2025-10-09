@@ -1,88 +1,85 @@
-#include "SFC6000D.h"
+#include "sensirion.h"
 
-static char g_errmsg[96];
-
-bool SFC6000D::begin(TwoWire* wire, uint8_t i2c_addr) {
+bool SFC6000D::begin(TwoWire& wire, uint8_t i2c_addr) {
   _addr = i2c_addr;
-  _dev.begin(*wire, _addr);
-  // Not strictly required, but a soft reset helps if the sensor was left running
-  // (SFC stays powered from 24 V even when MCU reboots).
-  if (!reset()) {
-    // continue anyway; some firmwares refuse reset while measuring
-  }
+  _dev.begin(wire, _addr);
   _begun = true;
   return true;
 }
 
 bool SFC6000D::mfcOn() {
   if (!_begun) return false;
-  // Make sure any previous loop is stopped, then start the measurement loop (for readback).
-  int16_t err = _dev.stopContinuousMeasurement();
-  if (err != NO_ERROR && err != STATUS_CODE_EXECUTION_FAILURE) {
-    // ignore benign “nothing to stop” errors
-    if (!check(err, F("stopContinuousMeasurement"))) return false;
-  }
-  err = _dev.SFC6XXX_START_MEAS_FN();  // startAirContinuousMeasurement() by default
-  return check(err, F("start*ContinuousMeasurement"));
+  // Best-effort stop first (in case it was already running)
+  (void)_dev.stopContinuousMeasurement();
+
+  // CO2-only as requested
+  int16_t err = _dev.startCo2ContinuousMeasurement();
+  return logIfError(err, F("startCo2ContinuousMeasurement"));
 }
 
 bool SFC6000D::mfcOff() {
   if (!_begun) return false;
 
-  // Setpoint = 0 (close valve)
-  int16_t err = _dev.setSetpoint(0.0f);
-  if (!check(err, F("setSetpoint(0)"))) return false;
+  // Set setpoint to 0 slm (0 sccm) and reset pointer as required by the driver docs
+  int16_t err = _dev.updateSetpoint(0.0f);      // slm
+  if (!ok(err)) return logIfError(err, F("updateSetpoint(0 slm)"));
+  (void)_dev.resetPointerToMeasurementBuffer();
 
-  // Stop the measurement loop to save a few mA on I2C activity
-  err = _dev.stopContinuousMeasurement();
-  if (err != NO_ERROR && err != STATUS_CODE_EXECUTION_FAILURE) {
-    return check(err, F("stopContinuousMeasurement"));
-  }
+  // Best-effort stop
+  (void)_dev.stopContinuousMeasurement();
   return true;
 }
 
 bool SFC6000D::mfcSetFlowSccm(float sccm) {
   if (!_begun) return false;
-  if (sccm < 0.0f) sccm = 0.0f;  // basic guard
-  // Library takes setpoint in sccm for SFC6xxx devices.
-  int16_t err = _dev.setSetpoint(sccm);
-  return check(err, F("setSetpoint(sccm)"));
-}
+  if (sccm < 0.0f) sccm = 0.0f;
 
-bool SFC6000D::mfcReadFlowSccm(float& out_sccm, uint16_t avg_samples) {
-  if (!_begun) return false;
+  const float slm = sccm / 1000.0f;             // driver expects slm
+  int16_t err = _dev.updateSetpoint(slm);
+  if (!ok(err)) return logIfError(err, F("updateSetpoint(slm)"));
 
-  // Use the averaged read; fall back to single if small sample count
-  if (avg_samples < 2) {
-    int16_t err = _dev.readMeasuredValue(out_sccm);
-    return check(err, F("readMeasuredValue"));
-  } else {
-    int16_t err = _dev.readAveragedMeasuredValue(avg_samples, out_sccm);
-    return check(err, F("readAveragedMeasuredValue"));
-  }
-}
-
-bool SFC6000D::reset() {
-  int16_t err = _dev.deviceReset();
-  // Some firmware keeps measuring across MCU resets; small delay after reset helps.
-  delay(5);
-  // If reset isn’t supported while measuring, don’t fail the whole init.
-  if (err != NO_ERROR) {
-    errorToString(err, g_errmsg, sizeof(g_errmsg));
-    // Uncomment if you want to see the reason on the console:
-    // Serial.printf("[SFC] deviceReset(): %s\n", g_errmsg);
-    // Don’t treat as fatal
-  }
+  // Per driver note: reset pointer after updating setpoint
+  (void)_dev.resetPointerToMeasurementBuffer();
   return true;
 }
 
-bool SFC6000D::check(int16_t err, const __FlashStringHelper* where) {
-  if (err == NO_ERROR) return true;
-  errorToString(err, g_errmsg, sizeof(g_errmsg));
-  // Minimal, non-spammy logging. Replace with your BLE logger if you prefer.
+bool SFC6000D::mfcReadFlowSccm(float& out_sccm, uint16_t avg_samples, uint16_t inter_sample_ms) {
+  if (!_begun) return false;
+  if (avg_samples == 0) avg_samples = 1;
+
+  float sum_slm = 0.0f;
+  uint16_t good = 0;
+
+  for (uint16_t i = 0; i < avg_samples; ++i) {
+    float slm = NAN;
+    int16_t err = _dev.readFlow(slm);           // returns slm
+    if (ok(err)) {
+      sum_slm += slm;
+      ++good;
+    } else {
+      // Non-fatal: skip this sample, keep trying
+      logIfError(err, F("readFlow"));
+    }
+    if (inter_sample_ms) delay(inter_sample_ms);
+  }
+
+  if (good == 0) return false;
+  const float avg_slm = sum_slm / good;
+  out_sccm = avg_slm * 1000.0f;                 // convert to sccm
+  return true;
+}
+
+bool SFC6000D::readTemperatureC(float& out_degC) {
+  if (!_begun) return false;
+  int16_t err = _dev.readTemperature(out_degC);
+  return logIfError(err, F("readTemperature"));
+}
+
+bool SFC6000D::logIfError(int16_t err, const __FlashStringHelper* where) {
+  if (ok(err)) return true;
   Serial.print(F("[SFC] "));
   Serial.print(where);
-  Serial.print(F(" -> "));
-  Serial.println(g_errmsg);
+  Serial.print(F(" err="));
+  Serial.println(err);
   return false;
 }

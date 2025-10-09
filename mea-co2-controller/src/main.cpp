@@ -12,7 +12,7 @@
 // Local modules
 #include "ble.h"
 #include "led_animations.h"
-#include "SFC6000D.h"
+#include "sensirion.h"
 
 // ---------------- Pinout ----------------
 #define ADC1 GPIO_NUM_1
@@ -154,7 +154,7 @@ void setup() {
   sht4.begin(&Wire);
   sht4.setPrecision(SHT4X_HIGH_PRECISION);
 
-  MFC.begin(&Wire);     // or your strapped address
+  MFC.begin(Wire);     // or your strapped address
   MFC.mfcOn();
 
   // LEDs
@@ -255,7 +255,7 @@ void loop() {
       (void)readArg(')');
       float flow = NAN;
       bool ok = MFC.mfcReadFlowSccm(flow, 10);
-      if (ok) respond(String(flow, 2)); else respond(0);
+      if (ok) respond(String(flow, 2)); else respond(String(0));
     }
     else {
       Serial.println("Unknown command: " + action);
