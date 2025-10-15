@@ -313,7 +313,7 @@ void loop() {
       LEDS.spinnerTimer(seconds, ORANGE);
       pwmDrivingSignal(2, 0);
 
-      pwmDrivingSignal(2, -75);
+      pwmDrivingSignal(2, -100);
       LEDS.spinnerTimer(seconds, ORANGE);
       pwmDrivingSignal(2, 0);
 
@@ -448,7 +448,7 @@ void closeValve() {
 }
 
 void openValve() {
-    pwmDrivingSignal(4, 60);
+    pwmDrivingSignal(4, 55);
     valveOpen = true;
     LastCall = ceil(millis() / 1000.0);
 }

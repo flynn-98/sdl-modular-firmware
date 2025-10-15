@@ -83,9 +83,9 @@ LedAnimations LEDS;
 // ---------------- Kinematics ----------------
 const float STEPS_REV   = 200.0;
 const float MICROSTEPS  = 4.0;
-const float ML_REV      = 0.094;   // ml/rev
-const float back_flow   = 0.02;    // ml
-const float default_flow_rate = 0.05; // ml/s
+const float ML_REV      = 0.4;   // ml/rev
+const float back_flow   = 0;    // ml
+const float default_flow_rate = 200.0; // ml/s
 const float MAX_ACCEL   = 500.0 * MICROSTEPS; // microsteps/s^2
 
 // ---------------- BLE UUIDs/Names ----------------
@@ -113,7 +113,7 @@ unsigned long LastCall = 0;
 const unsigned long screenReset = 120;
 
 // ------ Prototypes ------
-void pwmDrivingSignal(int motor, int power);
+void valveSignal(int valve, bool state);
 long volToSteps(float vol);
 void runSteppers();
 void driveStepper(int motor, float vol, float flow_rate = default_flow_rate, float back_flow = back_flow);
@@ -142,9 +142,6 @@ void setup() {
     digitalWrite(dir_pins[i], LOW);
     digitalWrite(en_pins[i], HIGH);
 
-    ledcSetup(i, 10000, 10);
-    ledcAttachPin(pwm_pins[i], i);
-
     steppers[i]->setAcceleration(MAX_ACCEL);
     steppers[i]->setMaxSpeed((float)volToSteps(default_flow_rate));
   }
@@ -154,8 +151,9 @@ void setup() {
   sht4.begin(&Wire);
   sht4.setPrecision(SHT4X_HIGH_PRECISION);
 
-  MFC.begin(Wire);     // or your strapped address
-  MFC.mfcOn();
+  MFC.begin(Wire);
+  bool ok = MFC.mfcOn();
+  Serial.println(ok ? "MFC enabled" : "Failed to enable MFC");
 
   // LEDs
   pinMode(LEDPIN, OUTPUT);
@@ -166,7 +164,9 @@ void setup() {
   Serial.println("Available functions:");
   Serial.println("singleStepperPump(int motor, float volume [ml], float flow_rate [ml/s])");
   Serial.println("multiStepperPump(float v1 [ml], float v2 [ml], float v3 [ml], float v4 [ml], float flow_rate [ml/s])");
-  Serial.println("transferPump(int motor, float power [+-%], float time [s])");
+  Serial.println("valveTimer(int valve, float seconds)");
+  Serial.println("valveOpen(int valve)");
+  Serial.println("valveClose(int valve)");
   Serial.println("getTemperature()");
   Serial.println("getHumidity()");
   Serial.println("statusCheck()");
@@ -180,7 +180,12 @@ void setup() {
   // BLE
   ble_begin(DEVICE_NAME, SERVICE_UUID, CHARACTERISTIC_UUID);
 
-  LEDS.spinnerTimer(1, GREEN);
+  if (ok) {
+    LEDS.spinnerTimer(1, GREEN);
+  }
+  else {
+    LEDS.spinnerTimer(1, RED);
+  }
 }
 
 // ---------------- Loop ----------------
@@ -215,14 +220,31 @@ void loop() {
       driveAllSteppers(volumes, flow_rate);
       respond("# Pump action complete");
     }
-    else if (action == "transferPump") {
+    else if (action == "valveTimer") {
       motor   = readArg(',').toInt();
-      pwm     = readArg(',').toFloat();
       seconds = readArg(')').toFloat();
-      pwmDrivingSignal(motor, pwm);
+
+      valveSignal(motor, true);
       LEDS.spinnerTimer(seconds, ORANGE);
-      pwmDrivingSignal(motor, 0);
-      respond("# Transfer complete");
+      valveSignal(motor, false);
+      respond("# Valve action complete");
+    }
+    else if (action == "valveOpen") {
+      motor   = readArg(')').toInt();
+
+      // turn off all valves first (in pairs)
+      //for (int i = 1; i < 6; i+=2) {
+      //  valveSignal(i, false);
+      //}
+
+      valveSignal(motor, true);
+      respond("# Valve open");
+    }
+    else if (action == "valveClose") {
+      motor   = readArg(')').toInt();
+ 
+      valveSignal(motor, false);
+      respond("# Valve closed");
     }
     else if (action == "getTemperature") {
       (void)readArg(')');
@@ -241,17 +263,17 @@ void loop() {
     else if (action == "mfcOn") {
       (void)readArg(')');
       bool ok = MFC.mfcOn();
-      respond(ok ? "# MFC on" : "# MFC on failed");
+      respond(ok ? "# MFC on" : "MFC on failed");
     }
     else if (action == "mfcOff") {
       (void)readArg(')');
       bool ok = MFC.mfcOff();
-      respond(ok ? "# MFC off" : "# MFC off failed");
+      respond(ok ? "# MFC off" : "MFC off failed");
     }
     else if (action == "mfcSetFlow") {
       float sccm = readArg(')').toFloat();   // e.g. 250.0 = 0.25 slm
       bool ok = MFC.mfcSetFlowSccm(sccm);
-      respond(ok ? "# Setpoint updated" : "# Setpoint failed");
+      respond(ok ? "# Setpoint updated" : "Setpoint failed");
     }
     else if (action == "mfcGetFlow") {
       (void)readArg(')');
@@ -261,11 +283,11 @@ void loop() {
     }
     else if (action == "mfcForceClose") {
       (void)readArg(')');
-      respond(MFC.mfcForceCloseValve() ? "# Valve forced CLOSED" : "# Force-close failed");
+      respond(MFC.mfcForceCloseValve() ? "# Valve forced CLOSED" : "Force-close failed");
     }
     else if (action == "mfcForceCloseReset") {
       (void)readArg(')');
-      respond(MFC.mfcResetForceCloseValve() ? "# Valve control restored" : "# Reset force-close failed");
+      respond(MFC.mfcResetForceCloseValve() ? "# Valve control restored" : "Reset force-close failed");
     }
     else {
       Serial.println("Unknown command: " + action);
@@ -352,22 +374,34 @@ void driveAllSteppers(float volumes[4], float flow_rate, float back_flow_local) 
   LEDS.pulse(ORANGE);
 }
 
-void pwmDrivingSignal(int motor, int power) {
-  power = constrain(power, -100, 100);
+void valveSignal(int valve, bool state) {
+  // integer div + remainder = 12345678 -> 11223344
+  int idx = ( (int)valve/2 ) + valve%2 - 1;
 
-  if (motor < 1 || motor > 4) {
-    Serial.println("Error: Invalid motor index. Must be 1–4.");
+  int dir_pin = dir_pins[idx];
+  int pwm_pin = pwm_pins[idx];
+
+  if (valve < 1 || valve > 6) {
+    Serial.println("Error: Invalid valve index. Must be 1–6.");
     return;
   }
-
-  int dir_pin = dir_pins[motor - 1];
-  if (power >= 0) {
-    digitalWrite(dir_pin, HIGH);  // Forward
-    ledcWrite(motor - 1, 1023 - map(power, 0, 100, 0, 1023));
-  } else {
-    digitalWrite(dir_pin, LOW);   // Reverse
-    ledcWrite(motor - 1, map(-power, 0, 100, 0, 1023));
+  else if (state==false)
+  {
+    digitalWrite(dir_pin, LOW);
+    digitalWrite(pwm_pin, LOW);
   }
+  else if (valve%2 != 0)
+  {
+    // Odd number (trigger high on left pin)
+    digitalWrite(dir_pin, LOW);
+    digitalWrite(pwm_pin, HIGH);
+  }
+  else {
+    // Even number (trigger high on right pin)
+    digitalWrite(dir_pin, HIGH);
+    digitalWrite(pwm_pin, LOW);
+  }
+  
 }
 
 void updateEnvironmentReadings() {
