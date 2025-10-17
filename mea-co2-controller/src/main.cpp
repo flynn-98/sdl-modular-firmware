@@ -162,7 +162,7 @@ void setup() {
   pinMode(BUTTON, INPUT);
 
   Serial.println("Available functions:");
-  Serial.println("singleStepperPump(int motor, float volume [ml], float flow_rate [ml/s])");
+  Serial.println("singleStepperPump(int motor, float volume [ml], float flow_rate [ml/min])");
   Serial.println("multiStepperPump(float v1 [ml], float v2 [ml], float v3 [ml], float v4 [ml], float flow_rate [ml/s])");
   Serial.println("valveTimer(int valve, float seconds)");
   Serial.println("valveOpen(int valve)");
@@ -207,7 +207,7 @@ void loop() {
       vol       = readArg(',').toFloat();
       flow_rate = readArg(')').toFloat();
 
-      driveStepper(motor, vol, flow_rate);
+      driveStepper(motor, vol, flow_rate/60.0f);
       respond("# Pump action complete");
     }
     else if (action == "multiStepperPump") {
@@ -231,11 +231,6 @@ void loop() {
     }
     else if (action == "valveOpen") {
       motor   = readArg(')').toInt();
-
-      // turn off all valves first (in pairs)
-      //for (int i = 1; i < 6; i+=2) {
-      //  valveSignal(i, false);
-      //}
 
       valveSignal(motor, true);
       respond("# Valve open");
