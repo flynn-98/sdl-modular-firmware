@@ -13,6 +13,7 @@
         "ostream": "cpp",
         "print": "cpp",
         "new": "cpp",
-        "ios": "cpp"
+        "ios": "cpp",
+        "ratio": "cpp"
     }
 }

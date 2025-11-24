@@ -94,7 +94,7 @@ const float MAX_ACCEL   = 500.0 * MICROSTEPS; // microsteps/s^2
 // ---------------- BLE UUIDs/Names ----------------
 #define SERVICE_UUID        "7b5c5357-7ddd-44a4-8419-bc6b6bd4b74b"
 #define CHARACTERISTIC_UUID "42bb8b48-f737-4435-adba-f578eba53675"
-#define DEVICE_NAME         "PumpControllerB"
+#define DEVICE_NAME         "PumpControllerA"
 
 // ---------------- Globals used in loop/handlers ----------------
 float measured_temp = 0.0;

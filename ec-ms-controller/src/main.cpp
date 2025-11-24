@@ -107,6 +107,7 @@ float volumes[4];
 float pwm;
 float seconds;
 int   motor;
+float local_back_flow;
 
 float voltage;
 float ph_value;
@@ -118,8 +119,10 @@ bool valveOpen = false;
 
 unsigned long CurrentTime;
 unsigned long ElapsedTime;
-unsigned long LastCall = 0;
-unsigned long resetTime = 1800; // 30mins max CO2 release
+unsigned long valveLastCall = 0;
+unsigned long pumpLastCall = 0;
+unsigned long valveResetTime = 1800; // 30mins max CO2 release
+unsigned long pumpResetTime = 6 * 3600; // 6hrs
 
 DFRobot_PH ph;
 
@@ -127,8 +130,8 @@ DFRobot_PH ph;
 void pwmDrivingSignal(int motor, int power);
 long volToSteps(float vol);
 void runSteppers();
-void driveStepper(int motor, float vol, float flow_rate = default_flow_rate, float back_flow = back_flow);
-void driveAllSteppers(float volumes[4], float flow_rate = default_flow_rate, float back_flow = back_flow);
+void driveStepper(int motor, float vol, float flow_rate = default_flow_rate, float local_back_flow = back_flow);
+void driveAllSteppers(float volumes[4], float flow_rate = default_flow_rate, float local_back_flow = back_flow);
 void closeValve();
 void openValve();
 void updateEnvironmentReadings();
@@ -198,6 +201,7 @@ void loop() {
   // Read either BLE message or Serial command
   if (ble_message_received() || Serial.available() > 0) {
     LEDS.pulse(PURPLE, 1, 1);
+    pumpLastCall = ceil(millis() / 1000.0);
 
     if (!ble_message_received()) {
       action = Serial.readStringUntil('(');
@@ -285,7 +289,7 @@ void loop() {
         flow_rate = ecms_flow_rate;
       }
 
-      driveStepper(motor=4, vol=vol, flow_rate=flow_rate);
+      driveStepper(motor=4, vol=vol, flow_rate=flow_rate, local_back_flow=0);
 
       respond("# Mixture sent to ECMS");
     }
@@ -340,13 +344,26 @@ void loop() {
   }
   else {
     CurrentTime = ceil(millis() / 1000.0);
-    ElapsedTime = CurrentTime - LastCall;
-
-    if (ElapsedTime > resetTime) {
-      LastCall = CurrentTime;
+    
+    ElapsedTime = CurrentTime - valveLastCall;
+    if (ElapsedTime > valveResetTime) {
+      valveLastCall = CurrentTime;
       if (openValve) {
         closeValve();
       }
+    }
+
+    ElapsedTime = CurrentTime - pumpLastCall;
+    if (ElapsedTime > pumpResetTime) {
+      pumpLastCall = CurrentTime;
+      for (int i = 0; i < 4; i++) {
+        volumes[i] = 0.15;
+      }
+      driveAllSteppers(volumes, ecms_flow_rate);
+      for (int i = 0; i < 4; i++) {
+        volumes[i] = -0.2;
+      }
+      driveAllSteppers(volumes, ecms_flow_rate);
     }
 
     // BLE housekeeping (connection status + re-adv)
@@ -379,7 +396,7 @@ void runSteppers() {
   } while (anyRunning);
 }
 
-void driveStepper(int motor, float vol, float flow_rate, float back_flow_local) {
+void driveStepper(int motor, float vol, float flow_rate, float local_back_flow) {
   if (motor < 1 || motor > 4) {
     Serial.println("Error: Invalid stepper index (must be 1-4)");
     return;
@@ -388,10 +405,10 @@ void driveStepper(int motor, float vol, float flow_rate, float back_flow_local) 
   digitalWrite(en_pins[motor - 1], LOW);
   steppers[motor - 1]->setMaxSpeed((float)volToSteps(flow_rate));
 
-  steppers[motor - 1]->move(volToSteps(vol + back_flow_local));
+  steppers[motor - 1]->move(volToSteps(vol + local_back_flow));
   runSteppers();
 
-  steppers[motor - 1]->move(volToSteps(-1 * back_flow_local));
+  steppers[motor - 1]->move(volToSteps(-1 * local_back_flow));
   runSteppers();
 
   digitalWrite(en_pins[motor - 1], HIGH);
@@ -399,18 +416,18 @@ void driveStepper(int motor, float vol, float flow_rate, float back_flow_local) 
   LEDS.pulse(ORANGE);
 }
 
-void driveAllSteppers(float volumes[4], float flow_rate, float back_flow_local) {
+void driveAllSteppers(float volumes[4], float flow_rate, float local_back_flow) {
   for (int i = 0; i < 4; i++) {
     if (volumes[i] != 0) {
       steppers[i]->setMaxSpeed((float)volToSteps(flow_rate));
-      steppers[i]->move(volToSteps(volumes[i] + back_flow_local));
+      steppers[i]->move(volToSteps(volumes[i] + local_back_flow));
     }
   }
   runSteppers();
 
   for (int i = 0; i < 4; i++) {
     if (volumes[i] != 0) {
-      steppers[i]->move(volToSteps(-1 * back_flow_local));
+      steppers[i]->move(volToSteps(-1 * local_back_flow));
     }
   }
   runSteppers();
@@ -450,5 +467,5 @@ void closeValve() {
 void openValve() {
     pwmDrivingSignal(4, 55);
     valveOpen = true;
-    LastCall = ceil(millis() / 1000.0);
+    valveLastCall = ceil(millis() / 1000.0);
 }

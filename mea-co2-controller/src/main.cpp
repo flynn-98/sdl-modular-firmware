@@ -85,13 +85,13 @@ const float STEPS_REV   = 200.0;
 const float MICROSTEPS  = 4.0;
 const float ML_REV      = 0.4;   // ml/rev
 const float back_flow   = 0;    // ml
-const float default_flow_rate = 200.0; // ml/s
+const float default_flow_rate = 0.3; //200.0; // ml/s
 const float MAX_ACCEL   = 500.0 * MICROSTEPS; // microsteps/s^2
 
 // ---------------- BLE UUIDs/Names ----------------
 #define SERVICE_UUID        "41ae6296-8eb6-4e65-a114-2de9e1038255"
 #define CHARACTERISTIC_UUID "b9caaaad-5236-4813-9bbe-826a79745934"
-#define DEVICE_NAME         "MEAController"
+#define DEVICE_NAME         "MEAController1" // TO CHANGE
 
 // ---------------- Globals used in loop/handlers ----------------
 float measured_temp = 0.0;
@@ -112,7 +112,10 @@ unsigned long ElapsedTime;
 unsigned long LastCall = 0;
 const unsigned long screenReset = 120;
 
+bool mfc_connected = false;
+
 // ------ Prototypes ------
+void pwmDrivingSignal(int motor, int power);
 void valveSignal(int valve, bool state);
 long volToSteps(float vol);
 void runSteppers();
@@ -152,8 +155,13 @@ void setup() {
   sht4.setPrecision(SHT4X_HIGH_PRECISION);
 
   MFC.begin(Wire);
-  bool ok = MFC.mfcOn();
-  Serial.println(ok ? "MFC enabled" : "Failed to enable MFC");
+  if (MFC.mfcOn()) {
+    mfc_connected = true;
+    Serial.println("MFC enabled")
+  }
+  else {
+    Serial.println("MFC not found")
+  }
 
   // LEDs
   pinMode(LEDPIN, OUTPUT);
@@ -162,6 +170,7 @@ void setup() {
   pinMode(BUTTON, INPUT);
 
   Serial.println("Available functions:");
+  Serial.println("setPWM(int motor, int power [%]");
   Serial.println("singleStepperPump(int motor, float volume [ml], float flow_rate [ml/min])");
   Serial.println("multiStepperPump(float v1 [ml], float v2 [ml], float v3 [ml], float v4 [ml], float flow_rate [ml/s])");
   Serial.println("valveTimer(int valve, float seconds)");
@@ -176,6 +185,12 @@ void setup() {
   Serial.println("mfcGetFlow()");
   Serial.println("mfcForceClose()");
   Serial.println("mfcForceCloseReset()");
+
+  // Testing
+  do {
+    driveStepper(1, 10, 0.3);
+  }
+  while (true);
 
   // BLE
   ble_begin(DEVICE_NAME, SERVICE_UUID, CHARACTERISTIC_UUID);
@@ -209,6 +224,18 @@ void loop() {
 
       driveStepper(motor, vol, flow_rate/60.0f);
       respond("# Pump action complete");
+    }
+    else if (action == "setPWM") {
+      motor     = readArg(',').toInt();
+      pwm       = readArg(')').toFloat();
+
+      if (mfc_connected) {
+        respond("[ERROR] PWM not available");
+      }
+      else {
+        pwmDrivingSignal(motor, pwm);
+        respond("# Pump action complete");
+      }
     }
     else if (action == "multiStepperPump") {
       volumes[0] = readArg(',').toFloat();
