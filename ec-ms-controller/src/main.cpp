@@ -2,6 +2,7 @@
 #include <esp_sleep.h>
 #include <Adafruit_NeoPixel.h>
 #include <Adafruit_SHT4x.h>
+#include <Adafruit_INA219.h>
 #include <ArduinoOTA.h>
 #include <WiFi.h>
 
@@ -74,6 +75,8 @@ const int en_pins[4]  = {EN5, EN6, EN7, EN8};
 Adafruit_SHT4x sht4 = Adafruit_SHT4x();
 sensors_event_t hum, temp;
 
+Adafruit_INA219 ina219;
+
 // ---------------- LED Animations ----------------
 #define NUMPIXELS 7
 static const uint8_t OUTER[6] = {0,1,2,3,4,5};
@@ -108,6 +111,9 @@ float pwm;
 float seconds;
 int   motor;
 float local_back_flow;
+
+float busvoltage = 0;
+float shuntvoltage = 0;
 
 float voltage;
 float ph_value;
@@ -171,6 +177,11 @@ void setup() {
   sht4.begin(&Wire);
   sht4.setPrecision(SHT4X_HIGH_PRECISION);
 
+  if (! ina219.begin(&Wire)) {
+    Serial.println("Failed to find INA219 chip");
+    while (1);
+  }
+
   // LEDs
   pinMode(LEDPIN, OUTPUT);
   LEDS.begin(LEDPIN, NUMPIXELS, CENTER_IDX, OUTER, 6, BLUE);
@@ -196,7 +207,7 @@ void setup() {
 
 // ---------------- Loop ----------------
 void loop() {
-  delay(500);
+  delay(50);
 
   // Read either BLE message or Serial command
   if (ble_message_received() || Serial.available() > 0) {
@@ -245,6 +256,11 @@ void loop() {
       (void)readArg(')');
       updateEnvironmentReadings();
       respond(String(measured_hum, 2));
+    }
+    else if (action == "getVoltage") {
+      (void)readArg(')');
+      busvoltage = ina219.getBusVoltage_V();
+      respond(String(busvoltage, 2));
     }
     else if (action == "statusCheck") {
       (void)readArg(')');
@@ -377,6 +393,12 @@ long volToSteps(float vol) {
   return floor(MICROSTEPS * STEPS_REV * vol / ML_REV);
 }
 
+void checkPressures() {
+  // Check voltages
+  busvoltage = ina219.getBusVoltage_V();
+  Serial.println("Bus Voltage: " + String(busvoltage) + "V");
+}
+
 void runSteppers() {
   // Enable all drivers
   for (int i = 0; i < 4; i++) digitalWrite(en_pins[i], LOW);
@@ -387,6 +409,8 @@ void runSteppers() {
     anyRunning = false;
     for (int i = 0; i < 4; i++) {
       if (steppers[i]->distanceToGo() != 0) {
+        // check pressure before moving any pumps: TODO
+        //checkPressures();
         steppers[i]->run();
         anyRunning = true;
       } else {

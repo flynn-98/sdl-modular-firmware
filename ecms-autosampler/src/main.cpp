@@ -5,20 +5,20 @@ const int TX = 0;
 const int RX = 1;
 
 // Pins for pump stepper motors, see https://learn.sparkfun.com/tutorials/big-easy-driver-hookup-guide/all
-const int PUMP_1_STEP = 2;
-const int PUMP_1_DIR = 3;
+const int AXIS_1_STEP = 2;
+const int AXIS_1_DIR = 3;
 
-const int PUMP_2_STEP = 4;
-const int PUMP_2_DIR = 5;
+const int AXIS_2_STEP = 4;
+const int AXIS_2_DIR = 5;
 
-const int PUMP_3_STEP = 6;
-const int PUMP_3_DIR = 7;
+const int AXIS_3_STEP = 6;
+const int AXIS_3_DIR = 7;
 
 // Pump 1 = Electrolyte into Cell, Pump 2 = Electrolyte out of Cell, Pump 3 = Cleaning Solution into Cell
 
 // Pins for 4th stepper motor
-const int PUMP_4_STEP = 8;
-const int PUMP_4_DIR = 9;
+const int AXIS_4_STEP = 8;
+const int AXIS_4_DIR = 9;
 
 // Define Arduino pins for each function
 const int SERVO_PIN = 10;
@@ -34,7 +34,7 @@ const int SDA_PIN = 18;
 const int SCL_PIN = 19;
 
 // Define remaining pins (A6 & A7 are analog only)
-const byte ANALOG_1 = A1;
+const byte LIMIT = A1;
 const byte ANALOG_2 = A2;
 const byte ANALOG_3 = A3;
 const byte ANALOG_6 = A6;
@@ -48,20 +48,20 @@ const float MICROSTEPS = 4.0;
 const float GEAR_RATIO = 14.0;
 const float ROD_PITCH = 2.0; //mm
 
-const float MOTOR_SPEED = 2000.0 * MICROSTEPS; //microsteps/s
-const float MAX_ACCEL = 1000.0 * MICROSTEPS; //microsteps/s2
+const float MOTOR_SPEED = 1000.0 * MICROSTEPS; //microsteps/s
+const float MAX_ACCEL = 500.0 * MICROSTEPS; //microsteps/s2
 
 // Define steppers with pins (STEP, DIR)
-AccelStepper PUMP_1(AccelStepper::DRIVER, PUMP_1_STEP, PUMP_1_DIR); 
-AccelStepper PUMP_2(AccelStepper::DRIVER, PUMP_2_STEP, PUMP_2_DIR);
-AccelStepper PUMP_3(AccelStepper::DRIVER, PUMP_3_STEP, PUMP_3_DIR); 
-AccelStepper PUMP_4(AccelStepper::DRIVER, PUMP_4_STEP, PUMP_4_DIR);
+AccelStepper AXIS_1(AccelStepper::DRIVER, AXIS_1_STEP, AXIS_1_DIR); 
+AccelStepper AXIS_2(AccelStepper::DRIVER, AXIS_2_STEP, AXIS_2_DIR);
+AccelStepper AXIS_3(AccelStepper::DRIVER, AXIS_3_STEP, AXIS_3_DIR); 
+AccelStepper AXIS_4(AccelStepper::DRIVER, AXIS_4_STEP, AXIS_4_DIR);
 
 // Ensure motor direction matches desired pump direction
 const float motorDir = 1;
+const float home_degs = 10;
 
 float target = 0;
-
 String action;
 
 void relayOn() {
@@ -84,28 +84,22 @@ long heightToSteps(float milli) {
 void moveDegrees(float angle) {
     relayOn();
 
-    // No limits for Pump
-    PUMP_2.move(degreesToSteps(angle));
+    AXIS_2.moveTo(degreesToSteps(angle));
 
     // Run until complete
-    PUMP_2.runToPosition();
+    AXIS_2.runToPosition();
 
-    // Report back to PC
-    Serial.println("# Move complete");
     relayOff();
 };
 
 void moveHeight(float height) {
     relayOn();
 
-    // No limits for Pump
-    PUMP_1.move(heightToSteps(height));
+    AXIS_1.moveTo(heightToSteps(height));
 
     // Run until complete
-    PUMP_1.runToPosition();
+    AXIS_1.runToPosition();
 
-    // Report back to PC
-    Serial.println("# Move complete");
     relayOff();
 };
 
@@ -113,39 +107,40 @@ void setup() {
   // Setup code here, will run just once on start-up
 
   // Set pins to be used
-  pinMode(PUMP_1_STEP, OUTPUT);
-  pinMode(PUMP_1_DIR, OUTPUT);
+  pinMode(AXIS_1_STEP, OUTPUT);
+  pinMode(AXIS_1_DIR, OUTPUT);
 
-  pinMode(PUMP_2_STEP, OUTPUT);
-  pinMode(PUMP_2_DIR, OUTPUT);
+  pinMode(AXIS_2_STEP, OUTPUT);
+  pinMode(AXIS_2_DIR, OUTPUT);
 
-  pinMode(PUMP_3_STEP, OUTPUT);
-  pinMode(PUMP_3_DIR, OUTPUT);
+  pinMode(AXIS_3_STEP, OUTPUT);
+  pinMode(AXIS_3_DIR, OUTPUT);
 
-  pinMode(PUMP_4_STEP, OUTPUT);
-  pinMode(PUMP_4_DIR, OUTPUT);
+  pinMode(AXIS_4_STEP, OUTPUT);
+  pinMode(AXIS_4_DIR, OUTPUT);
 
   pinMode(SERVO_PIN, OUTPUT);
   
   pinMode(RELAY_PIN, OUTPUT);
+  pinMode(LIMIT, INPUT_PULLUP);
 
   // Set motor speeds / acceleration
-  PUMP_1.setAcceleration(MAX_ACCEL);
-  PUMP_1.setMaxSpeed(MOTOR_SPEED);
+  AXIS_1.setAcceleration(MAX_ACCEL);
+  AXIS_1.setMaxSpeed(MOTOR_SPEED);
 
-  PUMP_2.setAcceleration(MAX_ACCEL);
-  PUMP_2.setMaxSpeed(MOTOR_SPEED);
+  AXIS_2.setAcceleration(MAX_ACCEL);
+  AXIS_2.setMaxSpeed(MOTOR_SPEED);
 
-  PUMP_3.setAcceleration(MAX_ACCEL);
-  PUMP_3.setMaxSpeed(MOTOR_SPEED);
+  AXIS_3.setAcceleration(MAX_ACCEL);
+  AXIS_3.setMaxSpeed(MOTOR_SPEED);
 
-  PUMP_4.setAcceleration(MAX_ACCEL);
-  PUMP_4.setMaxSpeed(MOTOR_SPEED);
+  AXIS_4.setAcceleration(MAX_ACCEL);
+  AXIS_4.setMaxSpeed(MOTOR_SPEED);
 
-  Serial.begin(115200);
+  Serial.begin(9600);
   
   relayOff();
-  Serial.println("Fluid Handling Kit Ready");
+  Serial.println("# Sampler Kit Ready");
 };
 
 void loop() {
@@ -165,17 +160,44 @@ void loop() {
             
             // Call action using received variables
             moveDegrees(target);
+
+            Serial.println("# Move complete");
         }
         else if (action == "moveHeight") {
             target = Serial.readStringUntil(')').toFloat();
             
             // Call action using received variables
             moveHeight(target);
+
+            Serial.println("# Move complete");
+        }
+        else if (action == "home") {
+            (void)Serial.readStringUntil(')').toFloat();
+
+            relayOn();
+            // Z axis
+            AXIS_1.move(heightToSteps(-50));
+            // Run until complete
+            AXIS_1.runToPosition();
+            AXIS_1.setCurrentPosition(0);
+
+            AXIS_2.move(degreesToSteps(-180));
+            // Run until complete
+            while (digitalRead(LIMIT) == HIGH) {
+                AXIS_2.run();
+            }
+
+            AXIS_2.move(degreesToSteps(home_degs));
+            AXIS_2.setCurrentPosition(0);
+
+            relayOff();
+
+            Serial.println("# Homing complete");
         }
         else if (action == "getStatus") {
             (void)Serial.readStringUntil(')').toFloat();
 
-            Serial.println("Autosampler Kit Ready");
+            Serial.println("# Sampler Kit Ready");
         }
         else {
             // Report back to PC if confused
