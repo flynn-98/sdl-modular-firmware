@@ -20,7 +20,7 @@
 // ---------------- Pinout ----------------
 #define ADC1 GPIO_NUM_1
 #define ADC2 GPIO_NUM_2
-#define ADC3 GPIO_NUM_4
+#define ADC3 GPIO_NUM_4 //used for pH
 
 #define SDA GPIO_NUM_42
 #define SCL GPIO_NUM_41
@@ -313,7 +313,7 @@ void loop() {
       (void)readArg(')');
       voltage = (analogRead(ADC3)/4095.0)*3300.0;;
       //ph_value = ph.readPH(voltage, 25)
-      ph_value = -0.00579 * voltage + 15.40708;
+      ph_value = -0.0062777 * voltage + 15.9543102;
 
       respond(String(ph_value, 2));
     }

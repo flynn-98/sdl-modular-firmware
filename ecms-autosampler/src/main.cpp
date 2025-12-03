@@ -49,6 +49,7 @@ const float GEAR_RATIO = 14.0;
 const float ROD_PITCH = 2.0; //mm
 
 const float MOTOR_SPEED = 1000.0 * MICROSTEPS; //microsteps/s
+const float HOME_SPEED = 200.0 * MICROSTEPS; //microsteps/s
 const float MAX_ACCEL = 500.0 * MICROSTEPS; //microsteps/s2
 
 // Define steppers with pins (STEP, DIR)
@@ -58,7 +59,8 @@ AccelStepper AXIS_3(AccelStepper::DRIVER, AXIS_3_STEP, AXIS_3_DIR);
 AccelStepper AXIS_4(AccelStepper::DRIVER, AXIS_4_STEP, AXIS_4_DIR);
 
 // Ensure motor direction matches desired pump direction
-const float motorDir = 1;
+const float heightDir = 1;
+const float spinDir = -1;
 const float home_degs = 10;
 
 float target = 0;
@@ -74,11 +76,11 @@ void relayOff() {
 };
 
 long degreesToSteps(float degs) {
-    return floor(motorDir * MICROSTEPS * STEPS_REV * degs * GEAR_RATIO / 360);
+    return floor(spinDir * MICROSTEPS * STEPS_REV * degs * GEAR_RATIO / 360);
 };
 
 long heightToSteps(float milli) {
-    return floor(motorDir * MICROSTEPS * STEPS_REV * milli / ROD_PITCH);
+    return floor(heightDir * MICROSTEPS * STEPS_REV * milli / ROD_PITCH);
 };
 
 void moveDegrees(float angle) {
@@ -180,18 +182,23 @@ void loop() {
             // Run until complete
             AXIS_1.runToPosition();
             AXIS_1.setCurrentPosition(0);
+            AXIS_2.setMaxSpeed(HOME_SPEED);
 
-            AXIS_2.move(degreesToSteps(-180));
+            AXIS_2.move(degreesToSteps(-360));
             // Run until complete
-            while (digitalRead(LIMIT) == HIGH) {
+            while (digitalRead(LIMIT) == HIGH && AXIS_2.distanceToGo() != 0) {
                 AXIS_2.run();
             }
 
-            AXIS_2.move(degreesToSteps(home_degs));
+            AXIS_2.setCurrentPosition(0);
+            AXIS_2.moveTo(degreesToSteps(home_degs));
+            AXIS_2.runToPosition();
+
             AXIS_2.setCurrentPosition(0);
 
             relayOff();
 
+            AXIS_2.setMaxSpeed(MOTOR_SPEED);
             Serial.println("# Homing complete");
         }
         else if (action == "getStatus") {
