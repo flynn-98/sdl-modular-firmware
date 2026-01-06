@@ -14,7 +14,7 @@ static const uint16_t BTN_DEBOUNCE_MS = 30;
 static const uint16_t BTN_TARE_TRIGGER_MS = 60;
 
 // --- add near top of main.cpp, after other consts ---
-static const float   CAL_KNOWN_LOAD_KG  = 0.05f;       // EDIT to your calibration mass
+static const float   CAL_KNOWN_LOAD_KG  = 1.0f;       // EDIT to your calibration mass
 static const uint32_t BTN_LONG_MS       = 5000;      // 5 seconds to enter calibration
 static bool     btnDown = false;
 static uint32_t btnDownAt = 0;

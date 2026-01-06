@@ -186,12 +186,6 @@ void setup() {
   Serial.println("mfcForceClose()");
   Serial.println("mfcForceCloseReset()");
 
-  // Testing
-  do {
-    driveStepper(1, 10, 0.3);
-  }
-  while (true);
-
   // BLE
   ble_begin(DEVICE_NAME, SERVICE_UUID, CHARACTERISTIC_UUID);
 
