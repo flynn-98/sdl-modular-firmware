@@ -17,6 +17,11 @@
 #include "ble.h"
 #include "led_animations.h"
 
+#include <Preferences.h>
+
+Preferences calibration_nvs;
+String pH_namespace = "phCalibrations";
+
 // ---------------- Pinout ----------------
 #define ADC1 GPIO_NUM_1
 #define ADC2 GPIO_NUM_2
@@ -118,6 +123,12 @@ float shuntvoltage = 0;
 float voltage;
 float ph_value;
 
+float def_ph7_calibration = 1426.37;
+float def_ph4_calibration = 1904.25;
+
+float ph7_calibration = 0;
+float ph4_calibration = 0;
+
 String action;
 String buffer;
 
@@ -154,6 +165,18 @@ static inline void respond(const String& s) { ble_respond(s); }
 void setup() {
   Serial.begin(115200);
   ph.begin();
+
+  // Open NVS namespace in read-only mode; check keys safely
+  if (!calibration_nvs.begin(pH_namespace.c_str(), /*readOnly=*/true)) {
+    Serial.println("[ERROR] Failed to open NVS to retrieve pH calibrations!");
+    ph7_calibration = def_ph7_calibration;
+    ph4_calibration = def_ph4_calibration;
+  }
+  else {
+    ph7_calibration = calibration_nvs.getFloat("ph7", def_ph7_calibration);
+    ph4_calibration = calibration_nvs.getFloat("ph4", def_ph4_calibration);
+    calibration_nvs.end();
+  }
 
   // GPIO + PWM + steppers
   for (int i = 0; i < 4; i++) {
@@ -226,16 +249,6 @@ void loop() {
       flow_rate = readArg(')').toFloat();
 
       driveStepper(motor, vol, flow_rate);
-      respond("# Pump action complete");
-    }
-    else if (action == "multiStepperPump") {
-      volumes[0] = readArg(',').toFloat();
-      volumes[1] = readArg(',').toFloat();
-      volumes[2] = readArg(',').toFloat();
-      volumes[3] = readArg(',').toFloat();
-      flow_rate  = readArg(')').toFloat();
-
-      driveAllSteppers(volumes, flow_rate);
       respond("# Pump action complete");
     }
     else if (action == "transferPump") {
@@ -311,9 +324,9 @@ void loop() {
     }
     else if (action == "getPh") {
       (void)readArg(')');
-      voltage = (analogRead(ADC3)/4095.0)*3300.0;;
-      //ph_value = ph.readPH(voltage, 25)
-      ph_value = -0.0062777 * voltage + 15.9543102;
+      voltage = (analogRead(ADC3)/4095.0)*3300.0;
+      //x2,y2 = ph7_cal,7 x1,y1 = ph4_cal,4
+      ph_value = 4 + ( 3 / (ph7_calibration - ph4_calibration) ) * (voltage - ph4_calibration);
 
       respond(String(ph_value, 2));
     }
@@ -338,6 +351,59 @@ void loop() {
       pwmDrivingSignal(2, 0);
 
       respond("# Refreshed Water");
+    }
+    else if (action == "calibratePh7") {
+      (void)readArg(')').toFloat();
+      voltage = (analogRead(ADC3)/4095.0)*3300.0;
+
+      // Open NVS namespace in read-only mode; check keys safely
+      if (!calibration_nvs.begin(pH_namespace.c_str(), /*readOnly=*/false)) {
+        respond("[ERROR] Failed to open NVS to change pH calibrations!");
+        return;
+      }
+      else {
+        ph7_calibration = voltage;
+        calibration_nvs.putFloat("ph7", voltage);
+        calibration_nvs.end();
+      }
+
+      respond("# pH7 calibration complete");
+    }
+    else if (action == "calibratePh4") {
+      (void)readArg(')').toFloat();
+      voltage = (analogRead(ADC3)/4095.0)*3300.0;
+
+      // Open NVS namespace in read-only mode; check keys safely
+      if (!calibration_nvs.begin(pH_namespace.c_str(), /*readOnly=*/false)) {
+        respond("[ERROR] Failed to open NVS to change pH calibrations!");
+        return;
+      }
+      else {
+        ph4_calibration = voltage;
+        calibration_nvs.putFloat("ph4", voltage);
+        calibration_nvs.end();
+      }
+
+      respond("# pH4 calibration complete");
+    }
+    else if (action == "resetPhCalibration") {
+      (void)readArg(')').toFloat();
+
+      ph7_calibration = def_ph7_calibration;
+      ph4_calibration = def_ph4_calibration;
+
+      // Open NVS namespace in read-only mode; check keys safely
+      if (!calibration_nvs.begin(pH_namespace.c_str(), /*readOnly=*/false)) {
+        respond("[ERROR] Failed to open NVS to change pH calibrations!");
+        return;
+      }
+      else {
+        calibration_nvs.putFloat("ph4", def_ph4_calibration);
+        calibration_nvs.putFloat("ph7", def_ph7_calibration);
+        calibration_nvs.end();
+      }
+
+      respond("# pH reset complete");
     }
     else {
       respond("Unknown command: " + action);
