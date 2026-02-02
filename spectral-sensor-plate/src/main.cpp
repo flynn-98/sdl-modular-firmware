@@ -1,6 +1,7 @@
 #include <Arduino.h>
 
 #include "AS7341Array.h"
+#include "analog_out.h"
 
 AS7341Array sensors;
 
@@ -10,12 +11,6 @@ AS7341Array sensors;
 
 #define HEATER1 GPIO_NUM_40 
 #define HEATER2 GPIO_NUM_39 
-
-#define CSO GPIO_NUM_34
-#define MOSI GPIO_NUM_35
-#define SCLK GPIO_NUM_36
-#define MISO GPIO_NUM_37
-#define CLR GPIO_NUM_12
 
 #define SDA GPIO_NUM_8
 #define SCL GPIO_NUM_9
@@ -36,6 +31,8 @@ AS7341Array sensors;
 String action;
 int req_index;
 float req_power;
+float req_voltage;
+float req_current;
 
 // ------ Prototypes ------
 void setHeaterPower(int heater, int power);
@@ -54,6 +51,8 @@ void setup() {
     Serial.println("Failed to init muxes/I2C.");
     while (1) delay(100);
   }
+
+  AnalogOut::init();
 
   Serial.println("Available functions:");
   Serial.println("setHeaterPower(int heater, int power)");
@@ -94,6 +93,18 @@ void loop() {
       }
       
       Serial.println("#");
+    }
+    else if (action == "setVoltage") {
+      req_voltage = Serial.readStringUntil(')').toFloat();
+
+      if (AnalogOut::setVoltage_V(req_voltage)) {Serial.println("#");}
+      else {Serial.println("Voltage set failed.");}
+    }
+    else if (action == "setCurrent") {
+      req_current = Serial.readStringUntil(')').toFloat();
+
+      if (AnalogOut::setCurrent_mA(req_current)) {Serial.println("#");}
+      else {Serial.println("Current set failed.");}
     }
     else if (action == "closeMuxes") {
       (void)Serial.readStringUntil(')');
