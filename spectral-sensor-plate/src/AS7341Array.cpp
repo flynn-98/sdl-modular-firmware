@@ -21,6 +21,9 @@ bool AS7341Array::begin() {
   pinMode((int)RESET1, OUTPUT);
   pinMode((int)RESET2, OUTPUT);
 
+  digitalWrite((int)RESET1, LOW);
+  digitalWrite((int)RESET2, LOW);
+
   if (!resetMuxes()) {
     return false;
   }
@@ -38,11 +41,11 @@ bool AS7341Array::resetMuxes() {
   // Active-low reset is typical; but your hardware might differ.
   // Most TCA9548A boards: RESET low = reset, high = run.
   // We'll pulse low briefly on each reset pin.
-  digitalWrite((int)RESET1, LOW);
-  digitalWrite((int)RESET2, LOW);
-  delay(5);
   digitalWrite((int)RESET1, HIGH);
   digitalWrite((int)RESET2, HIGH);
+  delay(5);
+  digitalWrite((int)RESET1, LOW);
+  digitalWrite((int)RESET2, LOW);
   delay(5);
   return true;
 }

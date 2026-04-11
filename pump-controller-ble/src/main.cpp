@@ -73,7 +73,7 @@ const int dir_pins[4] = {DIR1, DIR2, DIR3, DIR4};
 const int en_pins[4]  = {EN5, EN6, EN7, EN8};
 
 // ---------------- Sensors ----------------
-#define SHT4x_DEFAULT_ADDR 0x46
+#define SHT4x_DEFAULT_ADDR 0x44
 Adafruit_SHT4x sht4 = Adafruit_SHT4x();
 sensors_event_t hum, temp;
 
